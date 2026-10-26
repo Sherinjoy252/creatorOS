@@ -1,6 +1,10 @@
+import os
+from dotenv import load_dotenv
 
-OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_GENERATE_URL = f"{OLLAMA_BASE_URL}/api/generate"
-OLLAMA_MODEL = "qwen2.5:7b"
+load_dotenv()
 
-REQUEST_TIMEOUT_SECONDS = 600
+MESH_API_KEY = os.getenv("MESH_API_KEY", "")
+MESH_BASE_URL = "https://api.meshapi.ai/v1"
+MESH_MODEL = os.getenv("MESH_MODEL", "amazon/nova-micro-v1")
+
+REQUEST_TIMEOUT_SECONDS = 120

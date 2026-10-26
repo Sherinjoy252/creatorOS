@@ -1,0 +1,432 @@
+
+#root {
+  min-height: 100vh;
+}
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(ellipse at 50% 38%, #e8eaff 0%, transparent 48%),
+    #f8f9fc;
+  color: #20243a;
+}
+
+.navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 26px 7%;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 21px;
+  font-weight: 750;
+  letter-spacing: -0.7px;
+}
+
+.brand-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: #6258e8;
+  color: white;
+}
+
+.nav-label {
+  color: #73778b;
+  font-size: 13px;
+}
+
+.hero {
+  width: min(680px, 90%);
+  margin: auto;
+  padding: 64px 0 80px;
+  text-align: center;
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 15px;
+  border: 1px solid #e2e3f4;
+  border-radius: 30px;
+  background: #ffffffb8;
+  color: #5e59a8;
+  font-size: 13px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6b62e9;
+}
+
+h1 {
+  margin: 28px 0 20px;
+  font-size: clamp(38px, 6vw, 62px);
+  line-height: 1.12;
+  letter-spacing: -2.8px;
+}
+
+h1 span {
+  color: #6258e8;
+}
+
+.subtitle {
+  max-width: 520px;
+  margin: 0 auto;
+  color: #6b7085;
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+.linkedin-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: min(340px, 100%);
+  margin: 32px auto 0;
+  padding: 16px 20px;
+  border: none;
+  border-radius: 12px;
+  background: #0a66c2;
+  color: white;
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.linkedin-button:hover {
+  background: #084f96;
+  transform: translateY(-1px);
+}
+
+.linkedin-icon {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.button-arrow {
+  margin-left: auto;
+  font-size: 20px;
+}
+
+.helper-text {
+  color: #888ca0;
+  font-size: 12px;
+}
+
+.feature-list {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 54px;
+  text-align: left;
+}
+
+.feature {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.feature-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: #e9e7ff;
+  color: #6258e8;
+  font-size: 19px;
+}
+
+.feature strong {
+  font-size: 12px;
+}
+
+.feature p {
+  margin: 5px 0 0;
+  color: #7b8094;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+footer {
+  padding: 24px;
+  color: #9296a7;
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 560px) {
+  .navbar {
+    padding: 20px 5%;
+  }
+
+  .nav-label {
+    font-size: 11px;
+  }
+
+  .hero {
+    padding: 48px 0;
+  }
+
+  h1 {
+    letter-spacing: -1.5px;
+  }
+
+  .feature-list {
+    grid-template-columns: 1fr;
+    width: fit-content;
+    margin: 40px auto 0;
+  }
+}
+
+
+.studio {
+  max-width: 760px;
+  margin: 0 auto;
+  padding-bottom: 48px;
+}
+
+.brand-voice-form,
+.profile-panel {
+  width: 100%;
+  margin-top: 32px;
+  padding: 24px;
+  text-align: left;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 16px;
+  background: rgba(128, 128, 128, 0.04);
+  box-sizing: border-box;
+}
+
+.brand-voice-form h2,
+.profile-panel h2 {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+.brand-voice-form > p,
+.profile-description {
+  line-height: 1.6;
+  opacity: 0.8;
+}
+
+.post-input {
+  margin-top: 24px;
+}
+
+.post-input label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.post-input textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: 8px;
+  font: inherit;
+  resize: vertical;
+}
+
+.secondary-button,
+.remove-post-button,
+.logout-button {
+  cursor: pointer;
+  font: inherit;
+}
+
+.secondary-button {
+  margin-top: 16px;
+  padding: 10px 14px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.remove-post-button {
+  margin-top: 8px;
+  padding: 6px 0;
+  border: none;
+  background: transparent;
+  text-decoration: underline;
+}
+
+.generate-button {
+  width: 100%;
+  margin-top: 24px;
+}
+
+.generate-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.profile-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.7;
+}
+
+.success-message {
+  margin-top: 16px;
+  color: #23834b;
+}
+
+.error-message {
+  margin-top: 16px;
+  color: #c0392b;
+}
+
+.logout-button {
+  padding: 8px 14px;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 8px;
+  background: transparent;
+}
+
+
+/* ===== CreatorOS dashboard color fixes ===== */
+
+.studio {
+  color: #20243a;
+}
+
+.studio h1,
+.studio h2,
+.studio h3,
+.studio strong,
+.studio label {
+  color: #20243a;
+}
+
+.studio .subtitle,
+.studio .brand-voice-form > p,
+.studio .profile-description {
+  color: #555b70;
+}
+
+/* Ensure the logout button text is visible */
+.navbar .logout-button {
+  color: #20243a;
+  background-color: #ffffff;
+  border: 1px solid #cbd0dc;
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.navbar .logout-button:hover {
+  background-color: #f0f3f9;
+}
+
+/* Make the sample-post fields readable */
+.studio .post-input textarea {
+  color: #20243a;
+  background-color: #ffffff;
+  border: 1px solid #cbd0dc;
+}
+
+.studio .post-input textarea::placeholder {
+  color: #777e90;
+  opacity: 1;
+}
+
+/* Improve secondary button visibility */
+.studio .secondary-button {
+  color: #20243a;
+  background-color: #ffffff;
+  border: 1px solid #cbd0dc;
+}
+
+.studio .remove-post-button {
+  color: #b42318;
+}
+
+/* Brand voice profile panel */
+.studio .profile-panel {
+  color: #20243a;
+  background-color: #ffffff;
+  border: 1px solid #d8dce6;
+}
+
+.studio .profile-content {
+  color: #343a4f;
+}
+
+/* Status messages */
+.studio .success-message {
+  color: #187744;
+}
+
+.studio .error-message {
+  color: #b42318;
+}
+
+.content-studio {
+  margin-top: 28px;
+  text-align: left;
+}
+
+.content-studio form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.content-studio label {
+  font-weight: 600;
+}
+
+.content-studio textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font: inherit;
+  resize: vertical;
+}
+
+.generated-content {
+  margin-top: 28px;
+}
+
+.generated-content h3 {
+  margin-top: 24px;
+}
+
+.generated-content ol {
+  padding-left: 24px;
+}
+
+.generated-content li {
+  margin-bottom: 10px;
+  overflow-wrap: anywhere;
+}
+
+.generated-content .profile-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 600px;
+  overflow-y: auto;
+}

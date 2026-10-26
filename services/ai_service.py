@@ -1,42 +1,58 @@
 
-import requests
+from openai import OpenAI, APIError
 
-from config import OLLAMA_GENERATE_URL, OLLAMA_MODEL, REQUEST_TIMEOUT_SECONDS
+from config import (
+    MESH_API_KEY,
+    MESH_BASE_URL,
+    MESH_MODEL,
+    REQUEST_TIMEOUT_SECONDS,
+)
 
 
 class AIService:
-    """Handles communication with the local Ollama model."""
+    """Generate text through the Mesh API."""
 
     def __init__(self):
-        self._session = requests.Session()
+        if not MESH_API_KEY:
+            raise RuntimeError(
+                "MESH_API_KEY is missing. Add it to your .env file."
+            )
+
+        if not MESH_MODEL:
+            raise RuntimeError(
+                "MESH_MODEL is missing. Check your config.py and .env."
+            )
+
+        self._client = OpenAI(
+            api_key=MESH_API_KEY,
+            base_url=MESH_BASE_URL,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            max_retries=2,
+        )
 
     def generate_text(self, prompt: str) -> str:
-        """Generate text using Ollama and return the model response."""
+        """Generate text from a non-empty prompt."""
 
         if not prompt or not prompt.strip():
             raise ValueError("Prompt cannot be empty.")
 
-        payload = {
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-        }
-
         try:
-            response = self._session.post(
-                OLLAMA_GENERATE_URL,
-                json=payload,
-                timeout=REQUEST_TIMEOUT_SECONDS,
+            response = self._client.chat.completions.create(
+                model=MESH_MODEL,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
             )
-            response.raise_for_status()
-        except requests.RequestException as exc:
+        except APIError as exc:
             raise RuntimeError(
-                f"Could not generate text using Ollama: {exc}"
+                f"Mesh API request failed: {exc}"
             ) from exc
 
-        result = response.json().get("response", "").strip()
+        result = response.choices[0].message.content
 
-        if not result:
-            raise RuntimeError("Ollama returned an empty response.")
+        if not result or not result.strip():
+            raise RuntimeError(
+                "Mesh API returned an empty response."
+            )
 
-        return result
+        return result.strip()

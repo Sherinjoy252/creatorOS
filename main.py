@@ -1,46 +1,63 @@
 
+from graph.creator_graph import build_creator_graph
 from services.ai_service import AIService
-from services.curriculum_service import CurriculumService
 from services.linkedin_post_service import LinkedInPostService
 
 
 def main():
-    topic = input("Enter a topic to learn: ").strip()
+    topic = input("Enter the LinkedIn post topic: ").strip()
 
     if not topic:
         print("Topic cannot be empty.")
         return
 
-    ai_service = AIService()
-    curriculum_service = CurriculumService(ai_service)
-    post_service = LinkedInPostService(ai_service)
+    brand_voice = input(
+        "Describe the brand voice: "
+    ).strip()
+
+    if not brand_voice:
+        brand_voice = "Clear, practical, educational and friendly"
 
     try:
-        print(f"\nGenerating a learning roadmap for: {topic}")
+        graph = build_creator_graph()
 
-        roadmap = curriculum_service.create_roadmap(topic)
+        initial_state = {
+            "topic": topic,
+            "brand_voice": brand_voice,
+            "strategist_angle": "",
+            "strategy_reason": "",
+            "draft": "",
+            "critique": "",
+            "revision_count": 0,
+            "max_revisions": 2,
+            "approved": False,
+            "audit_trail": [],
+        }
 
-        print("\nRoadmap generated and saved.")
-        print(roadmap)
+        print("\nRunning CreatorOS...")
+        result = graph.invoke(initial_state)
 
-        print("\nGenerating the first LinkedIn post...")
+        post_service = LinkedInPostService(AIService())
+        draft_path = post_service.save_draft(
+            topic, 1, result["draft"]
+        )
 
-        # Initial version: generate the first lesson from the roadmap.
-        lesson = roadmap.split("\n## Lesson 2:", 1)[0]
+        print("\n=== CreatorOS Result ===")
+        print(f"Angle: {result['strategist_angle']}")
+        print(f"Reason: {result['strategy_reason']}")
+        print(f"Approved: {result['approved']}")
+        print(f"Revisions: {result['revision_count']}")
+        print(f"\nDraft:\n{result['draft']}")
 
-        post = post_service.create_post(topic, lesson)
-        draft_path = post_service.save_draft(topic, 1, post)
+        print("\nAudit trail:")
+        for event in result["audit_trail"]:
+            print(f"- {event}")
 
-        print("\n" + "=" * 50)
-        print("LINKEDIN POST DRAFT")
-        print("=" * 50)
-        print(post)
-        print("=" * 50)
         print(f"\nDraft saved to: {draft_path}")
-        print("\nNothing has been published to LinkedIn.")
+        print("Nothing has been published to LinkedIn.")
 
     except Exception as exc:
-        print(f"\nThe workflow failed: {exc}")
+        print(f"\nCreatorOS failed: {exc}")
 
 
 if __name__ == "__main__":
