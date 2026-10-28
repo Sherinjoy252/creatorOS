@@ -19,6 +19,16 @@ function App() {
   const [contentHistory, setContentHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedHistoryItem, setSelectedHistoryItem] = useState(null);
+  const [performanceHistory, setPerformanceHistory] = useState([]);
+  const [performanceForm, setPerformanceForm] = useState({
+    impressions: "",
+    likes: "",
+    comments: "",
+    reposts: "",
+  });
+  const [performanceLoading, setPerformanceLoading] = useState(false);
+  const [performanceSaving, setPerformanceSaving] = useState(false);
+  const [performanceMessage, setPerformanceMessage] = useState("");
 
   async function loadUser() {
     try {
@@ -97,6 +107,14 @@ function App() {
         setGeneratedContent(null);
         setContentHistory([]);
         setSelectedHistoryItem(null);
+        setPerformanceHistory([]);
+        setPerformanceForm({
+          impressions: "",
+          likes: "",
+          comments: "",
+          reposts: "",
+        });
+        setPerformanceMessage("");
         setSavingMessage("");
       } else {
         setError("Logout failed. Please try again.");
@@ -208,6 +226,144 @@ function App() {
     } finally {
       setContentGenerating(false);
     }
+  }
+
+  async function handleSelectHistoryItem(item) {
+    setSelectedHistoryItem(item);
+    setPerformanceHistory([]);
+    setPerformanceMessage("");
+    setError("");
+    setPerformanceLoading(true);
+
+    try {
+      const response = await fetch(
+        `/api/content/${item.id}/performance`,
+        { credentials: "include" }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(
+          typeof data.detail === "string"
+            ? data.detail
+            : "Unable to load performance history."
+        );
+        return;
+      }
+
+      setPerformanceHistory(data);
+      const latest = data.length > 0 ? data[data.length - 1] : null;
+      if (latest) {
+        setPerformanceForm({
+          impressions: String(latest.impressions),
+          likes: String(latest.likes),
+          comments: String(latest.comments),
+          reposts: String(latest.reposts),
+        });
+      } else {
+        setPerformanceForm({
+          impressions: "",
+          likes: "",
+          comments: "",
+          reposts: "",
+        });
+      }
+    } catch {
+      setError("Unable to connect to CreatorOS while loading performance.");
+    } finally {
+      setPerformanceLoading(false);
+    }
+  }
+
+  function updatePerformanceField(field, value) {
+    setPerformanceForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function submitPerformance(values, dataSource = "manual") {
+    if (!selectedHistoryItem) return;
+
+    setError("");
+    setPerformanceMessage("");
+    setPerformanceSaving(true);
+
+    try {
+      const response = await fetch(
+        `/api/content/${selectedHistoryItem.id}/performance`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            impressions: Number(values.impressions),
+            likes: Number(values.likes),
+            comments: Number(values.comments),
+            reposts: Number(values.reposts),
+            data_source: dataSource,
+          }),
+        }
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        setError(
+          typeof data.detail === "string"
+            ? data.detail
+            : "Unable to save performance metrics."
+        );
+        return;
+      }
+
+      setPerformanceHistory((current) => [...current, data]);
+      setPerformanceForm({
+        impressions: String(data.impressions),
+        likes: String(data.likes),
+        comments: String(data.comments),
+        reposts: String(data.reposts),
+      });
+      setPerformanceMessage(
+        dataSource === "simulated"
+          ? "Simulated performance snapshot saved."
+          : "Performance snapshot saved."
+      );
+    } catch {
+      setError("Unable to connect to CreatorOS while saving performance.");
+    } finally {
+      setPerformanceSaving(false);
+    }
+  }
+
+  async function handleSavePerformance(event) {
+    event.preventDefault();
+
+    const fields = ["impressions", "likes", "comments", "reposts"];
+    const hasInvalidValue = fields.some((field) => {
+      const value = performanceForm[field];
+      return value === "" || !Number.isInteger(Number(value)) || Number(value) < 0;
+    });
+
+    if (hasInvalidValue) {
+      setError("Enter whole numbers greater than or equal to zero for every metric.");
+      return;
+    }
+
+    await submitPerformance(performanceForm, "manual");
+  }
+
+  async function handleSimulatePerformance() {
+    const latest =
+      performanceHistory.length > 0
+        ? performanceHistory[performanceHistory.length - 1]
+        : { impressions: 0, likes: 0, comments: 0, reposts: 0 };
+
+    // Demo-only increments: these are sample values, not LinkedIn analytics.
+    const simulatedValues = {
+      impressions: latest.impressions + Math.max(50, Math.round(latest.impressions * 0.25)),
+      likes: latest.likes + Math.max(2, Math.round(latest.likes * 0.15)),
+      comments: latest.comments + (latest.comments % 2 === 0 ? 1 : 0),
+      reposts: latest.reposts + (latest.reposts % 3 === 0 ? 1 : 0),
+    };
+
+    await submitPerformance(simulatedValues, "simulated");
   }
 
   async function loadContentHistory() {
@@ -454,7 +610,7 @@ function App() {
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => setSelectedHistoryItem(item)}
+                  onClick={() => handleSelectHistoryItem(item)}
                 >
                   View post
                 </button>
@@ -492,6 +648,100 @@ function App() {
                     <li key={index}>{entry}</li>
                   ))}
                 </ol>
+
+                <section
+                  className="performance-panel"
+                  style={{ marginTop: "2rem", paddingTop: "1.5rem", borderTop: "1px solid #d7dce5" }}
+                >
+                  <h3>Performance tracking</h3>
+                  <p className="profile-description">
+                    Enter the latest metrics from LinkedIn, or create clearly labelled
+                    simulated data for a demo. Each save creates a new snapshot.
+                  </p>
+
+                  {performanceLoading && <p>Loading performance history...</p>}
+
+                  <form onSubmit={handleSavePerformance}>
+                    <div
+                      className="performance-fields"
+                      style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "1rem" }}
+                    >
+                      {[
+                        ["impressions", "Impressions"],
+                        ["likes", "Likes"],
+                        ["comments", "Comments"],
+                        ["reposts", "Reposts"],
+                      ].map(([field, label]) => (
+                        <div className="post-input" key={field}>
+                          <label htmlFor={`performance-${field}`}>{label}</label>
+                          <input
+                            id={`performance-${field}`}
+                            type="number"
+                            min="0"
+                            step="1"
+                            required
+                            value={performanceForm[field]}
+                            onChange={(event) =>
+                              updatePerformanceField(field, event.target.value)
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+
+                    <div
+                      className="performance-actions"
+                      style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "1rem" }}
+                    >
+                      <button
+                        type="submit"
+                        className="linkedin-button generate-button"
+                        disabled={performanceSaving || performanceLoading}
+                      >
+                        {performanceSaving ? "Saving..." : "Save manual metrics"}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={handleSimulatePerformance}
+                        disabled={performanceSaving || performanceLoading}
+                      >
+                        Simulate next update
+                      </button>
+                    </div>
+                  </form>
+
+                  {performanceMessage && (
+                    <p className="success-message">{performanceMessage}</p>
+                  )}
+
+                  <h4>Snapshot history</h4>
+                  {performanceHistory.length === 0 && !performanceLoading ? (
+                    <p>No performance snapshots yet.</p>
+                  ) : (
+                    <div className="performance-history">
+                      {performanceHistory.map((snapshot) => (
+                        <article className="history-item" key={snapshot.id}>
+                          <p>
+                            <strong>
+                              {snapshot.data_source === "simulated"
+                                ? "Simulated data"
+                                : "Manual data"}
+                            </strong>
+                            {" · "}
+                            {snapshot.recorded_at
+                              ? new Date(snapshot.recorded_at).toLocaleString()
+                              : "Recently saved"}
+                          </p>
+                          <p>
+                            Impressions: {snapshot.impressions} · Likes: {snapshot.likes}
+                            {" · "}Comments: {snapshot.comments} · Reposts: {snapshot.reposts}
+                          </p>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
 
                 <button
                   type="button"

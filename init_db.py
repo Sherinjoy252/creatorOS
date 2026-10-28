@@ -1,11 +1,18 @@
+
 from database import Base, engine
-from models import BrandVoice, GeneratedContent, User
+from models import (
+    BrandVoice,
+    GeneratedContent,
+    LearningLesson,
+    PostPerformance,
+    User,
+)
 
 
-def main():
+def init_db():
     Base.metadata.create_all(bind=engine)
-    print("CreatorOS database tables created successfully.")
+    print("Database tables created successfully.")
 
 
 if __name__ == "__main__":
-    main()
+    init_db()

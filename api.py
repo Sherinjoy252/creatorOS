@@ -2,6 +2,7 @@
 import os
 from collections.abc import Generator
 from uuid import UUID
+import uuid
 
 from fastapi.responses import RedirectResponse
 import httpx
@@ -10,14 +11,16 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
+from sqlalchemy import select, func
 
 from database import SessionLocal
-from models import GeneratedContent, User
+from models import GeneratedContent, LearningLesson, PostPerformance, User
 from services.user_service import get_or_create_user
 from pydantic import BaseModel, Field
 
 from graph.creator_graph import build_creator_graph
 from services.brand_voice_service import BrandVoiceService
+from services.learning_service import LearningService
 
 
 load_dotenv()
@@ -112,6 +115,13 @@ class BrandVoiceRequest(BaseModel):
 
 class ContentGenerationRequest(BaseModel):
     topic: str = Field(min_length=3, max_length=300)
+
+class PerformanceInput(BaseModel):
+    impressions: int = Field(ge=0)
+    likes: int = Field(ge=0)
+    comments: int = Field(ge=0)
+    reposts: int = Field(ge=0)
+    data_source: str = "manual"
 
 
 @app.get("/")
@@ -334,10 +344,23 @@ def generate_content(
             detail="Please create your brand voice profile first.",
         )
 
+    approved_lessons = db.scalars(
+        select(LearningLesson)
+        .where(
+            LearningLesson.user_id == current_user.id,
+            LearningLesson.status == "approved",
+        )
+        .order_by(LearningLesson.created_at.desc())
+        .limit(10)
+    ).all()
+
+    lesson_texts = [lesson.lesson for lesson in approved_lessons]
+
     initial_state = {
         "tenant_id": str(current_user.id),
         "topic": topic,
         "brand_voice": voice.profile,
+        "approved_lessons": lesson_texts,
         "strategist_angle": "",
         "strategy_reason": "",
         "draft": "",
@@ -403,7 +426,6 @@ def get_content_history(
     current_user: User = Depends(require_current_user),
     db: Session = Depends(get_db),
 ):
-    from sqlalchemy import select
 
     statement = (
         select(GeneratedContent)
@@ -427,4 +449,288 @@ def get_content_history(
         }
         for item in contents
     ]
+
+@app.post("/api/content/{content_id}/performance")
+def save_performance(
+    content_id: uuid.UUID,
+    payload: PerformanceInput,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    content = db.scalar(
+        select(GeneratedContent).where(
+            GeneratedContent.id == content_id,
+            GeneratedContent.user_id == current_user.id,
+        )
+    )
+
+    if content is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Content not found",
+        )
+
+    if payload.data_source not in {"manual", "simulated"}:
+        raise HTTPException(
+            status_code=400,
+            detail="data_source must be manual or simulated",
+        )
+
+    snapshot = PostPerformance(
+        content_id=content.id,
+        impressions=payload.impressions,
+        likes=payload.likes,
+        comments=payload.comments,
+        reposts=payload.reposts,
+        data_source=payload.data_source,
+    )
+
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+
+    return {
+        "id": str(snapshot.id),
+        "content_id": str(snapshot.content_id),
+        "impressions": snapshot.impressions,
+        "likes": snapshot.likes,
+        "comments": snapshot.comments,
+        "reposts": snapshot.reposts,
+        "data_source": snapshot.data_source,
+        "recorded_at": snapshot.recorded_at,
+    }
+
+@app.get("/api/content/{content_id}/performance")
+def get_performance_history(
+    content_id: uuid.UUID,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    content = db.scalar(
+        select(GeneratedContent).where(
+            GeneratedContent.id == content_id,
+            GeneratedContent.user_id == current_user.id,
+        )
+    )
+
+    if content is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Content not found",
+        )
+
+    snapshots = db.scalars(
+        select(PostPerformance)
+        .where(PostPerformance.content_id == content.id)
+        .order_by(PostPerformance.recorded_at.asc())
+    ).all()
+
+    return [
+        {
+            "id": str(item.id),
+            "impressions": item.impressions,
+            "likes": item.likes,
+            "comments": item.comments,
+            "reposts": item.reposts,
+            "data_source": item.data_source,
+            "recorded_at": item.recorded_at,
+        }
+        for item in snapshots
+    ]
+
+
+@app.post("/api/content/{content_id}/teach")
+def teach_creatoros(
+    content_id: uuid.UUID,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    # Verify that the post belongs to the signed-in user.
+    content = db.scalar(
+        select(GeneratedContent).where(
+            GeneratedContent.id == content_id,
+            GeneratedContent.user_id == current_user.id,
+        )
+    )
+
+    if content is None:
+        raise HTTPException(status_code=404, detail="Content not found")
+
+    # Require performance data before teaching.
+    snapshots = db.scalars(
+        select(PostPerformance).where(
+            PostPerformance.content_id == content.id
+        )
+    ).all()
+
+    if not snapshots:
+        raise HTTPException(
+            status_code=400,
+            detail="Add performance data before teaching CreatorOS.",
+        )
+
+    # Analyze the performance through Mesh API.
+    try:
+        service = LearningService()
+        lessons = service.propose_lessons(
+            db=db,
+            content=content,
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not analyze performance. Please try again.",
+        ) from exc
+
+    # Save proposed lessons. They are not active until approved.
+    try:
+        saved_lessons = [
+            LearningLesson(
+                user_id=current_user.id,
+                content_id=content.id,
+                lesson=lesson,
+                status="proposed",
+            )
+            for lesson in lessons
+        ]
+
+        db.add_all(saved_lessons)
+        db.commit()
+
+        for lesson in saved_lessons:
+            db.refresh(lesson)
+
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not save the proposed lessons.",
+        ) from exc
+
+    has_simulated_data = any(
+        item.data_source == "simulated" for item in snapshots
+    )
+
+    return {
+        "content_id": str(content.id),
+        "lessons": [
+            {
+                "id": str(item.id),
+                "lesson": item.lesson,
+                "status": item.status,
+                "demo_only": has_simulated_data,
+            }
+            for item in saved_lessons
+        ],
+    }
+
+
+@app.get("/api/content/{content_id}/lessons")
+def get_learning_lessons(
+    content_id: uuid.UUID,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    # Verify post ownership.
+    content = db.scalar(
+        select(GeneratedContent).where(
+            GeneratedContent.id == content_id,
+            GeneratedContent.user_id == current_user.id,
+        )
+    )
+
+    if content is None:
+        raise HTTPException(status_code=404, detail="Content not found")
+
+    lessons = db.scalars(
+        select(LearningLesson)
+        .where(
+            LearningLesson.content_id == content.id,
+            LearningLesson.user_id == current_user.id,
+        )
+        .order_by(LearningLesson.created_at.desc())
+    ).all()
+
+    return [
+        {
+            "id": str(item.id),
+            "content_id": str(item.content_id),
+            "lesson": item.lesson,
+            "status": item.status,
+            "created_at": item.created_at,
+            "approved_at": item.approved_at,
+        }
+        for item in lessons
+    ]
+
+
+@app.post("/api/content/{content_id}/lessons/{lesson_id}/approve")
+def approve_learning_lesson(
+    content_id: uuid.UUID,
+    lesson_id: uuid.UUID,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    # Verify post ownership.
+    content = db.scalar(
+        select(GeneratedContent).where(
+            GeneratedContent.id == content_id,
+            GeneratedContent.user_id == current_user.id,
+        )
+    )
+
+    if content is None:
+        raise HTTPException(status_code=404, detail="Content not found")
+
+    lesson = db.scalar(
+        select(LearningLesson).where(
+            LearningLesson.id == lesson_id,
+            LearningLesson.content_id == content.id,
+            LearningLesson.user_id == current_user.id,
+        )
+    )
+
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    # # Do not approve insights derived from simulated data.
+    # snapshots = db.scalars(
+    #     select(PostPerformance).where(
+    #         PostPerformance.content_id == content.id
+    #     )
+    # ).all()
+
+    # if any(item.data_source == "simulated" for item in snapshots):
+    #     raise HTTPException(
+    #         status_code=400,
+    #         detail=(
+    #             "This post includes simulated performance data. "
+    #             "Its lessons cannot be approved as real-performance insights."
+    #         ),
+    #     )
+
+    if lesson.status == "approved":
+        return {
+            "id": str(lesson.id),
+            "lesson": lesson.lesson,
+            "status": lesson.status,
+            "message": "Lesson is already approved.",
+        }
+
+    lesson.status = "approved"
+    lesson.approved_at = func.now()
+
+    db.commit()
+    db.refresh(lesson)
+
+    return {
+        "id": str(lesson.id),
+        "lesson": lesson.lesson,
+        "status": lesson.status,
+        "approved_at": lesson.approved_at,
+    }
+
 

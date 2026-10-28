@@ -6,6 +6,7 @@ class CreatorState(TypedDict):
     tenant_id: str
     topic: str
     brand_voice: str
+    approved_lessons: list[str]
     strategist_angle: str
     strategy_reason: str
     draft: str
