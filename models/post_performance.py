@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
     func,
@@ -37,6 +38,7 @@ class PostPerformance(Base):
             "reposts >= 0",
             name="ck_post_performance_reposts",
         ),
+        
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -77,4 +79,10 @@ class PostPerformance(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
+    )
+
+    audience_comments: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
     )

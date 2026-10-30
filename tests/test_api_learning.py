@@ -2,7 +2,6 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
-from urllib import response
 from uuid import uuid4
 
 import pytest
@@ -157,3 +156,34 @@ def test_lesson_proposal_retrieval_and_approval(
 
     assert approved["status"] == "approved"
     assert approved["approved_at"] is not None
+
+
+
+def test_lesson_can_be_rejected_and_cannot_later_be_approved(
+    authenticated_learning_client,
+):
+    client, content_id, saved_lessons = authenticated_learning_client
+
+    proposal_response = client.post(f"/api/content/{content_id}/teach")
+    assert proposal_response.status_code == 200
+    lesson_id = proposal_response.json()["lessons"][0]["id"]
+
+    reject_response = client.post(
+        f"/api/content/{content_id}/lessons/{lesson_id}/reject"
+    )
+    assert reject_response.status_code == 200
+    assert reject_response.json()["status"] == "rejected"
+    assert saved_lessons[0].status == "rejected"
+
+    # Repeating the same decision is safe.
+    repeat_response = client.post(
+        f"/api/content/{content_id}/lessons/{lesson_id}/reject"
+    )
+    assert repeat_response.status_code == 200
+    assert repeat_response.json()["status"] == "rejected"
+
+    # A rejected lesson cannot later be approved.
+    approve_response = client.post(
+        f"/api/content/{content_id}/lessons/{lesson_id}/approve"
+    )
+    assert approve_response.status_code == 409

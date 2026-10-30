@@ -20,6 +20,7 @@ function App() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedHistoryItem, setSelectedHistoryItem] = useState(null);
   const [performanceHistory, setPerformanceHistory] = useState([]);
+  const [audienceComments, setAudienceComments] = useState("");
   const [performanceForm, setPerformanceForm] = useState({
     impressions: "",
     likes: "",
@@ -29,6 +30,9 @@ function App() {
   const [performanceLoading, setPerformanceLoading] = useState(false);
   const [performanceSaving, setPerformanceSaving] = useState(false);
   const [performanceMessage, setPerformanceMessage] = useState("");
+  const [learningLessons, setLearningLessons] = useState([]);
+  const [lessonsLoading, setLessonsLoading] = useState(false);
+  const [lessonActionId, setLessonActionId] = useState("");
 
   async function loadUser() {
     try {
@@ -108,6 +112,8 @@ function App() {
         setContentHistory([]);
         setSelectedHistoryItem(null);
         setPerformanceHistory([]);
+        setLearningLessons([]);
+        setAudienceComments("");
         setPerformanceForm({
           impressions: "",
           likes: "",
@@ -228,8 +234,86 @@ function App() {
     }
   }
 
+  async function loadLearningLessons(contentId) {
+    setLessonsLoading(true);
+    try {
+      const response = await fetch(
+        `/api/content/${contentId}/lessons`,
+        { credentials: "include" }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(
+          typeof data.detail === "string"
+            ? data.detail
+            : "Unable to load learning lessons."
+        );
+        return;
+      }
+
+      setLearningLessons(data);
+    } catch {
+      setError("Unable to connect while loading learning lessons.");
+    } finally {
+      setLessonsLoading(false);
+    }
+  }
+
+  async function handleLessonDecision(lessonId, decision) {
+    if (!selectedHistoryItem) return;
+
+    setError("");
+    setLessonActionId(lessonId);
+
+    try {
+      const response = await fetch(
+        `/api/content/${selectedHistoryItem.id}/lessons/${lessonId}/${decision}`,
+        {
+          method: "POST",
+          credentials: "include",
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(
+          typeof data.detail === "string"
+            ? data.detail
+            : `Unable to ${decision} lesson.`
+        );
+        return;
+      }
+
+      // Update only the selected lesson. Do not trigger a new analysis.
+      setLearningLessons((current) =>
+        current.map((lesson) =>
+          lesson.id === lessonId
+            ? {
+                ...lesson,
+                status: data.status,
+                approved_at: data.approved_at ?? null,
+              }
+            : lesson
+        )
+      );
+    } catch {
+      setError("Unable to connect while updating the lesson.");
+    } finally {
+      setLessonActionId("");
+    }
+  }
+
   async function handleSelectHistoryItem(item) {
+    if (selectedHistoryItem?.id === item.id) {
+      setSelectedHistoryItem(null);
+      setLearningLessons([]);
+      return;
+    }
+
     setSelectedHistoryItem(item);
+    setLearningLessons([]);
+    loadLearningLessons(item.id);
     setPerformanceHistory([]);
     setPerformanceMessage("");
     setError("");
@@ -260,7 +344,9 @@ function App() {
           comments: String(latest.comments),
           reposts: String(latest.reposts),
         });
+        setAudienceComments((latest.audience_comments || []).join("\\n"));
       } else {
+        setAudienceComments("");
         setPerformanceForm({
           impressions: "",
           likes: "",
@@ -298,6 +384,13 @@ function App() {
             likes: Number(values.likes),
             comments: Number(values.comments),
             reposts: Number(values.reposts),
+            audience_comments:
+              dataSource === "manual"
+                ? audienceComments
+                    .split("\\n")
+                    .map((comment) => comment.trim())
+                    .filter(Boolean)
+                : [],
             data_source: dataSource,
           }),
         }
@@ -314,6 +407,7 @@ function App() {
       }
 
       setPerformanceHistory((current) => [...current, data]);
+      await loadLearningLessons(selectedHistoryItem.id);
       setPerformanceForm({
         impressions: String(data.impressions),
         likes: String(data.likes),
@@ -587,7 +681,7 @@ function App() {
             </section>
           )}
 
-          {/* Content History: separate from the brand voice condition */}
+          {/* Content History: each selected post expands directly in its own card. */}
           <section className="profile-panel content-studio">
             <h2>Content History</h2>
 
@@ -597,164 +691,241 @@ function App() {
               <p>No saved posts yet. Generate your first post above.</p>
             )}
 
-            {contentHistory.map((item) => (
-              <article key={item.id} className="history-item">
-                <h3>{item.topic}</h3>
+            <div className="content-history-list">
+              {contentHistory.map((item) => {
+                const isExpanded = selectedHistoryItem?.id === item.id;
 
-                <p>
-                  Status: {item.approved ? "Approved" : "Needs review"}
-                  {" · "}
-                  Revisions: {item.revision_count}
-                </p>
+                return (
+                  <article key={item.id} className="history-item">
+                    <h3>{item.topic}</h3>
 
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => handleSelectHistoryItem(item)}
-                >
-                  View post
-                </button>
-              </article>
-            ))}
+                    <p>
+                      Status: {item.approved ? "Approved" : "Needs review"}
+                      {" · "}
+                      Revisions: {item.revision_count}
+                    </p>
 
-            {selectedHistoryItem && (
-              <div className="generated-content">
-                <h3>{selectedHistoryItem.topic}</h3>
-
-                <p>
-                  Approval status:{" "}
-                  <strong>
-                    {selectedHistoryItem.approved ? "Approved" : "Needs review"}
-                  </strong>
-                </p>
-
-                <pre className="profile-content">
-                  {selectedHistoryItem.draft}
-                </pre>
-
-                <h4>Strategist's approach</h4>
-
-                <p>
-                  <strong>Angle:</strong>{" "}
-                  {selectedHistoryItem.strategist_angle}
-                </p>
-
-                <p>{selectedHistoryItem.strategy_reason}</p>
-
-                <h4>Audit trail</h4>
-
-                <ol>
-                  {selectedHistoryItem.audit_trail?.map((entry, index) => (
-                    <li key={index}>{entry}</li>
-                  ))}
-                </ol>
-
-                <section
-                  className="performance-panel"
-                  style={{ marginTop: "2rem", paddingTop: "1.5rem", borderTop: "1px solid #d7dce5" }}
-                >
-                  <h3>Performance tracking</h3>
-                  <p className="profile-description">
-                    Enter the latest metrics from LinkedIn, or create clearly labelled
-                    simulated data for a demo. Each save creates a new snapshot.
-                  </p>
-
-                  {performanceLoading && <p>Loading performance history...</p>}
-
-                  <form onSubmit={handleSavePerformance}>
-                    <div
-                      className="performance-fields"
-                      style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "1rem" }}
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => handleSelectHistoryItem(item)}
                     >
-                      {[
-                        ["impressions", "Impressions"],
-                        ["likes", "Likes"],
-                        ["comments", "Comments"],
-                        ["reposts", "Reposts"],
-                      ].map(([field, label]) => (
-                        <div className="post-input" key={field}>
-                          <label htmlFor={`performance-${field}`}>{label}</label>
-                          <input
-                            id={`performance-${field}`}
-                            type="number"
-                            min="0"
-                            step="1"
-                            required
-                            value={performanceForm[field]}
-                            onChange={(event) =>
-                              updatePerformanceField(field, event.target.value)
-                            }
-                          />
-                        </div>
-                      ))}
-                    </div>
+                      {isExpanded ? "Hide post" : "View post"}
+                    </button>
 
-                    <div
-                      className="performance-actions"
-                      style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "1rem" }}
-                    >
-                      <button
-                        type="submit"
-                        className="linkedin-button generate-button"
-                        disabled={performanceSaving || performanceLoading}
-                      >
-                        {performanceSaving ? "Saving..." : "Save manual metrics"}
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={handleSimulatePerformance}
-                        disabled={performanceSaving || performanceLoading}
-                      >
-                        Simulate next update
-                      </button>
-                    </div>
-                  </form>
+                    {isExpanded && (
+                      <div className="generated-content expanded-post">
+                        <h3>Generated post</h3>
 
-                  {performanceMessage && (
-                    <p className="success-message">{performanceMessage}</p>
-                  )}
+                        <p>
+                          Approval status:{" "}
+                          <strong>
+                            {selectedHistoryItem.approved ? "Approved" : "Needs review"}
+                          </strong>
+                        </p>
 
-                  <h4>Snapshot history</h4>
-                  {performanceHistory.length === 0 && !performanceLoading ? (
-                    <p>No performance snapshots yet.</p>
-                  ) : (
-                    <div className="performance-history">
-                      {performanceHistory.map((snapshot) => (
-                        <article className="history-item" key={snapshot.id}>
-                          <p>
-                            <strong>
-                              {snapshot.data_source === "simulated"
-                                ? "Simulated data"
-                                : "Manual data"}
-                            </strong>
-                            {" · "}
-                            {snapshot.recorded_at
-                              ? new Date(snapshot.recorded_at).toLocaleString()
-                              : "Recently saved"}
+                        <pre className="profile-content">
+                          {selectedHistoryItem.draft}
+                        </pre>
+
+                        <h4>Strategist's approach</h4>
+                        <p>
+                          <strong>Angle:</strong>{" "}
+                          {selectedHistoryItem.strategist_angle}
+                        </p>
+                        <p>{selectedHistoryItem.strategy_reason}</p>
+
+                        <h4>Audit trail</h4>
+                        <ol>
+                          {selectedHistoryItem.audit_trail?.map((entry, index) => (
+                            <li key={index}>{entry}</li>
+                          ))}
+                        </ol>
+
+                        <section
+                          className="performance-panel"
+                          style={{
+                            marginTop: "1.5rem",
+                            paddingTop: "1.5rem",
+                            borderTop: "1px solid #d7dce5",
+                          }}
+                        >
+                          <h3>Performance tracking</h3>
+                          <p className="profile-description">
+                            Enter the latest LinkedIn metrics or create clearly labelled
+                            simulated data. Every save creates a separate snapshot.
                           </p>
-                          <p>
-                            Impressions: {snapshot.impressions} · Likes: {snapshot.likes}
-                            {" · "}Comments: {snapshot.comments} · Reposts: {snapshot.reposts}
-                          </p>
-                        </article>
-                      ))}
-                    </div>
-                  )}
-                </section>
 
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => setSelectedHistoryItem(null)}
-                >
-                  Close post
-                </button>
-              </div>
-            )}
+                          {performanceLoading && <p>Loading performance history...</p>}
+
+                          <form onSubmit={handleSavePerformance}>
+                            <div
+                              className="performance-fields"
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                                gap: "1rem",
+                              }}
+                            >
+                              {[
+                                ["impressions", "Impressions"],
+                                ["likes", "Likes"],
+                                ["comments", "Comments"],
+                                ["reposts", "Reposts"],
+                              ].map(([field, label]) => (
+                                <div className="post-input" key={field}>
+                                  <label htmlFor={`performance-${field}`}>{label}</label>
+                                  <input
+                                    id={`performance-${field}`}
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    required
+                                    value={performanceForm[field]}
+                                    onChange={(event) =>
+                                      updatePerformanceField(field, event.target.value)
+                                    }
+                                  />
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="post-input" style={{ marginTop: "1rem" }}>
+                              <label htmlFor="audience-comments">
+                                Audience comments (optional)
+                              </label>
+                              <textarea
+                                id="audience-comments"
+                                value={audienceComments}
+                                onChange={(event) => setAudienceComments(event.target.value)}
+                                placeholder={"Paste LinkedIn comments here, one comment per line...\\n\\nThis was really helpful!\\nCould you share a practical example?"}
+                                rows={6}
+                              />
+                              <p className="helper-text">
+                                Paste actual LinkedIn comments, one per line. Comments
+                                are included only with manual performance snapshots.
+                              </p>
+                            </div>
+
+                            <div
+                              className="performance-actions"
+                              style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: "0.75rem",
+                                marginTop: "1rem",
+                              }}
+                            >
+                              <button
+                                type="submit"
+                                className="linkedin-button generate-button"
+                                disabled={performanceSaving || performanceLoading}
+                              >
+                                {performanceSaving ? "Saving..." : "Save manual metrics"}
+                              </button>
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={handleSimulatePerformance}
+                                disabled={performanceSaving || performanceLoading}
+                              >
+                                Simulate next update
+                              </button>
+                            </div>
+                          </form>
+
+                          {performanceMessage && (
+                            <p className="success-message">{performanceMessage}</p>
+                          )}
+
+                          <h4>Snapshot history</h4>
+                          {performanceHistory.length === 0 && !performanceLoading ? (
+                            <p>No performance snapshots yet.</p>
+                          ) : (
+                            <div className="performance-history">
+                              {performanceHistory.map((snapshot) => (
+                                <article className="history-item" key={snapshot.id}>
+                                  <p>
+                                    <strong>
+                                      {snapshot.data_source === "simulated"
+                                        ? "Simulated data"
+                                        : "Manual data"}
+                                    </strong>
+                                    {" · "}
+                                    {snapshot.recorded_at
+                                      ? new Date(snapshot.recorded_at).toLocaleString()
+                                      : "Recently saved"}
+                                  </p>
+                                  <p>
+                                    Impressions: {snapshot.impressions} · Likes: {snapshot.likes}
+                                    {" · "}Comments: {snapshot.comments} · Reposts: {snapshot.reposts}
+                                  </p>
+                                </article>
+                              ))}
+                            </div>
+                          )}
+
+                          <h4>Learning lessons for this post</h4>
+                          <p className="profile-description">
+                            Review the suggestions generated from this post's performance.
+                            Approving a lesson saves that decision; it does not run another analysis.
+                            Only approved lessons are used in future content generation.
+                          </p>
+
+                          {lessonsLoading && <p>Loading lessons...</p>}
+
+                          {!lessonsLoading && learningLessons.length === 0 && (
+                            <p>
+                              No lessons have been proposed for this post yet. Save performance
+                              metrics to generate learning suggestions.
+                            </p>
+                          )}
+
+                          {!lessonsLoading && learningLessons.map((lesson) => (
+                            <article className="history-item learning-lesson" key={lesson.id}>
+                              <p>{lesson.lesson}</p>
+                              <p>
+                                Status: <strong>{lesson.status}</strong>
+                              </p>
+
+                              {lesson.status === "proposed" && (
+                                <div
+                                  className="performance-actions"
+                                  style={{
+                                    display: "flex",
+                                    flexWrap: "wrap",
+                                    gap: "0.75rem",
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    className="linkedin-button"
+                                    disabled={lessonActionId === lesson.id}
+                                    onClick={() => handleLessonDecision(lesson.id, "approve")}
+                                  >
+                                    {lessonActionId === lesson.id ? "Saving..." : "Approve"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="secondary-button"
+                                    disabled={lessonActionId === lesson.id}
+                                    onClick={() => handleLessonDecision(lesson.id, "reject")}
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              )}
+                            </article>
+                          ))}
+                        </section>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
           </section>
         </section>
-
         <footer>CreatorOS · Built for creators who want to grow</footer>
       </main>
     );

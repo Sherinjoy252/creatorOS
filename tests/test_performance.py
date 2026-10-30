@@ -1,7 +1,6 @@
-
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -21,15 +20,23 @@ def performance_client():
         user_id=user_id,
     )
 
-    # Simulate an existing post owned by the authenticated user.
     mock_db.get.return_value = content
+    mock_db.scalar.return_value = content
+    mock_db.performance_records = []
 
     def save_record(record):
         record.id = uuid4()
         record.recorded_at = datetime.now(timezone.utc)
-        mock_db.saved_performance = record
+
+        if record.__class__.__name__ == "PostPerformance":
+            mock_db.performance_records.append(record)
 
     mock_db.add.side_effect = save_record
+
+    # The GET endpoint uses db.scalars(...).all()
+    mock_db.scalars.return_value.all.side_effect = (
+        lambda: mock_db.performance_records
+    )
 
     app.dependency_overrides[get_db] = lambda: mock_db
     app.dependency_overrides[require_current_user] = (
@@ -46,46 +53,61 @@ def performance_client():
 def test_performance_snapshots_save_and_retrieve(performance_client):
     client, mock_db, content_id = performance_client
 
+    audience_comments = [
+        "This was really helpful!",
+        "Could you share a practical example?",
+    ]
+
     payload = {
         "impressions": 500,
         "likes": 40,
         "comments": 12,
         "reposts": 8,
-        "data_source": "simulated",
+        "audience_comments": audience_comments,
+        "data_source": "manual",
     }
 
-    response = client.post(
-        f"/api/content/{content_id}/performance",
-        json=payload,
-    )
+    with patch("api.LearningService") as mock_learning:
+        mock_learning.return_value.propose_lessons.return_value = [
+            "Posts with practical examples receive better engagement."
+        ]
 
-    assert response.status_code in (200, 201)
-    mock_db.add.assert_called_once()
+        response = client.post(
+            f"/api/content/{content_id}/performance",
+            json=payload,
+        )
 
-    saved_record = mock_db.saved_performance
+    assert response.status_code == 200
 
-    assert saved_record.impressions == 500
-    assert saved_record.likes == 40
-    assert saved_record.comments == 12
-    assert saved_record.reposts == 8
-    assert saved_record.data_source == "simulated"
+    data = response.json()
 
-    # Simulate the record returned by the database query.
-    mock_db.scalars.return_value.all.return_value = [saved_record]
+    assert data["impressions"] == 500
+    assert data["learning_status"] == "completed"
+    assert data["lessons_created"] == 1
+    assert data["audience_comments"] == audience_comments
 
+    mock_learning.return_value.propose_lessons.assert_called_once()
+
+    # Verify that the comments were persisted with the performance snapshot.
+    assert len(mock_db.performance_records) == 1
+    assert mock_db.performance_records[0].audience_comments == audience_comments
+
+    # Verify that the performance snapshot and comments can be retrieved.
     response = client.get(
         f"/api/content/{content_id}/performance"
     )
 
     assert response.status_code == 200
-
     snapshots = response.json()
 
-    assert len(snapshots) == 1
-    assert snapshots[0]["impressions"] == 500
-    assert snapshots[0]["likes"] == 40
-    assert snapshots[0]["comments"] == 12
-    assert snapshots[0]["reposts"] == 8
+    saved_snapshot = next(
+        item for item in snapshots if item["impressions"] == 500
+    )
+
+    assert saved_snapshot["likes"] == 40
+    assert saved_snapshot["comments"] == 12
+    assert saved_snapshot["reposts"] == 8
+    assert saved_snapshot["audience_comments"] == audience_comments
 
 
 def test_negative_performance_metrics_are_rejected(performance_client):
@@ -96,6 +118,7 @@ def test_negative_performance_metrics_are_rejected(performance_client):
         "likes": 0,
         "comments": 0,
         "reposts": 0,
+        "audience_comments": [],
         "data_source": "manual",
     }
 

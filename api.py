@@ -1,5 +1,6 @@
 
 import os
+import re
 from collections.abc import Generator
 from uuid import UUID
 import uuid
@@ -121,6 +122,10 @@ class PerformanceInput(BaseModel):
     likes: int = Field(ge=0)
     comments: int = Field(ge=0)
     reposts: int = Field(ge=0)
+    audience_comments: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+    )
     data_source: str = "manual"
 
 
@@ -450,6 +455,66 @@ def get_content_history(
         for item in contents
     ]
 
+def _normalize_lesson_text(lesson: str) -> str:
+    """Normalize lesson wording for a safe exact-duplicate check."""
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", lesson.lower()).split())
+
+
+def _save_new_learning_lessons(
+    db: Session,
+    content_id: uuid.UUID,
+    user_id: uuid.UUID,
+    lesson_texts: list[str],
+) -> list[LearningLesson]:
+    """
+    Persist only lessons not already recorded for this post.
+
+    Existing proposed, approved, and rejected records are all considered
+    duplicates so a user's previous decision is never overwritten.
+    """
+    existing_lessons = db.scalars(
+        select(LearningLesson).where(
+            LearningLesson.content_id == content_id,
+            LearningLesson.user_id == user_id,
+        )
+    ).all()
+
+    existing_normalized = {
+        _normalize_lesson_text(item.lesson)
+        for item in existing_lessons
+        if getattr(item, "lesson", None)
+    }
+
+    new_lessons = []
+    for lesson_text in lesson_texts:
+        if not isinstance(lesson_text, str) or not lesson_text.strip():
+            continue
+
+        cleaned = lesson_text.strip()
+        normalized = _normalize_lesson_text(cleaned)
+
+        if not normalized or normalized in existing_normalized:
+            continue
+
+        existing_normalized.add(normalized)
+        new_lessons.append(
+            LearningLesson(
+                user_id=user_id,
+                content_id=content_id,
+                lesson=cleaned,
+                status="proposed",
+            )
+        )
+
+    if new_lessons:
+        db.add_all(new_lessons)
+        db.commit()
+        for lesson in new_lessons:
+            db.refresh(lesson)
+
+    return new_lessons
+
+
 @app.post("/api/content/{content_id}/performance")
 def save_performance(
     content_id: uuid.UUID,
@@ -476,19 +541,111 @@ def save_performance(
             detail="data_source must be manual or simulated",
         )
 
+    audience_comments = [
+        comment.strip()
+        for comment in payload.audience_comments
+        if comment.strip()
+    ]
+
+    # Avoid re-running the learning engine when the exact same snapshot
+    # (metrics, comments, and source) has already been submitted for this post.
+    previous_snapshots = db.scalars(
+        select(PostPerformance).where(
+            PostPerformance.content_id == content.id
+        )
+    ).all()
+
+    normalized_comments = sorted(
+        " ".join(comment.lower().split()) for comment in audience_comments
+    )
+
+    duplicate_snapshot = next(
+        (
+            item
+            for item in previous_snapshots
+            if (
+                item.impressions == payload.impressions
+                and item.likes == payload.likes
+                and item.comments == payload.comments
+                and item.reposts == payload.reposts
+                and item.data_source == payload.data_source
+                and sorted(
+                    " ".join(comment.lower().split())
+                    for comment in (item.audience_comments or [])
+                ) == normalized_comments
+            )
+        ),
+        None,
+    )
+
+    if duplicate_snapshot is not None:
+        return {
+            "id": str(duplicate_snapshot.id),
+            "content_id": str(duplicate_snapshot.content_id),
+            "impressions": duplicate_snapshot.impressions,
+            "likes": duplicate_snapshot.likes,
+            "comments": duplicate_snapshot.comments,
+            "reposts": duplicate_snapshot.reposts,
+            "data_source": duplicate_snapshot.data_source,
+            "recorded_at": duplicate_snapshot.recorded_at,
+            "learning_status": "skipped_duplicate",
+            "lessons_created": 0,
+            "audience_comments": duplicate_snapshot.audience_comments or [],
+            "message": (
+                "This exact performance snapshot was already submitted. "
+                "Learning analysis was skipped."
+            ),
+        }
+
     snapshot = PostPerformance(
         content_id=content.id,
         impressions=payload.impressions,
         likes=payload.likes,
         comments=payload.comments,
         reposts=payload.reposts,
+        audience_comments=audience_comments,
         data_source=payload.data_source,
     )
 
-    db.add(snapshot)
-    db.commit()
-    db.refresh(snapshot)
+    try:
+        db.add(snapshot)
+        db.commit()
+        db.refresh(snapshot)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not save performance metrics.",
+        ) from exc
 
+    # Step 2: Automatically analyze performance using LearningService.
+    learning_status = "completed"
+    lessons_created = 0
+
+    try:
+        service = LearningService()
+
+        lessons = service.propose_lessons(
+            db=db,
+            content=content,
+            user_id=current_user.id,
+        )
+
+        # Save only genuinely new lessons. Existing decisions are preserved.
+        proposed_lessons = _save_new_learning_lessons(
+            db=db,
+            content_id=content.id,
+            user_id=current_user.id,
+            lesson_texts=lessons,
+        )
+        lessons_created = len(proposed_lessons)
+
+    except Exception:
+        # Keep the already committed performance snapshot.
+        db.rollback()
+        learning_status = "failed"
+
+    # Step 4: Return the saved metrics and learning result.
     return {
         "id": str(snapshot.id),
         "content_id": str(snapshot.content_id),
@@ -498,6 +655,9 @@ def save_performance(
         "reposts": snapshot.reposts,
         "data_source": snapshot.data_source,
         "recorded_at": snapshot.recorded_at,
+        "learning_status": learning_status,
+        "lessons_created": lessons_created,
+        "audience_comments": snapshot.audience_comments,
     }
 
 @app.get("/api/content/{content_id}/performance")
@@ -534,6 +694,7 @@ def get_performance_history(
             "reposts": item.reposts,
             "data_source": item.data_source,
             "recorded_at": item.recorded_at,
+            "audience_comments": item.audience_comments or [],
         }
         for item in snapshots
     ]
@@ -585,24 +746,14 @@ def teach_creatoros(
             detail="Could not analyze performance. Please try again.",
         ) from exc
 
-    # Save proposed lessons. They are not active until approved.
+    # Save only new lessons; never duplicate existing proposals or decisions.
     try:
-        saved_lessons = [
-            LearningLesson(
-                user_id=current_user.id,
-                content_id=content.id,
-                lesson=lesson,
-                status="proposed",
-            )
-            for lesson in lessons
-        ]
-
-        db.add_all(saved_lessons)
-        db.commit()
-
-        for lesson in saved_lessons:
-            db.refresh(lesson)
-
+        saved_lessons = _save_new_learning_lessons(
+            db=db,
+            content_id=content.id,
+            user_id=current_user.id,
+            lesson_texts=lessons,
+        )
     except Exception as exc:
         db.rollback()
         raise HTTPException(
@@ -625,6 +776,11 @@ def teach_creatoros(
             }
             for item in saved_lessons
         ],
+        "message": (
+            "No new lessons were identified. Existing lessons were retained."
+            if not saved_lessons
+            else "New learning lessons were saved."
+        ),
     }
 
 
@@ -667,21 +823,19 @@ def get_learning_lessons(
     ]
 
 
-@app.post("/api/content/{content_id}/lessons/{lesson_id}/approve")
-def approve_learning_lesson(
+def _get_owned_lesson(
     content_id: uuid.UUID,
     lesson_id: uuid.UUID,
-    current_user: User = Depends(require_current_user),
-    db: Session = Depends(get_db),
+    current_user: User,
+    db: Session,
 ):
-    # Verify post ownership.
+    """Load a lesson only when its post and lesson belong to the user."""
     content = db.scalar(
         select(GeneratedContent).where(
             GeneratedContent.id == content_id,
             GeneratedContent.user_id == current_user.id,
         )
     )
-
     if content is None:
         raise HTTPException(status_code=404, detail="Content not found")
 
@@ -692,25 +846,22 @@ def approve_learning_lesson(
             LearningLesson.user_id == current_user.id,
         )
     )
-
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
-    # # Do not approve insights derived from simulated data.
-    # snapshots = db.scalars(
-    #     select(PostPerformance).where(
-    #         PostPerformance.content_id == content.id
-    #     )
-    # ).all()
+    return content, lesson
 
-    # if any(item.data_source == "simulated" for item in snapshots):
-    #     raise HTTPException(
-    #         status_code=400,
-    #         detail=(
-    #             "This post includes simulated performance data. "
-    #             "Its lessons cannot be approved as real-performance insights."
-    #         ),
-    #     )
+
+@app.post("/api/content/{content_id}/lessons/{lesson_id}/approve")
+def approve_learning_lesson(
+    content_id: uuid.UUID,
+    lesson_id: uuid.UUID,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    content, lesson = _get_owned_lesson(
+        content_id, lesson_id, current_user, db
+    )
 
     if lesson.status == "approved":
         return {
@@ -720,11 +871,39 @@ def approve_learning_lesson(
             "message": "Lesson is already approved.",
         }
 
+    if lesson.status == "rejected":
+        raise HTTPException(
+            status_code=409,
+            detail="A rejected lesson cannot be approved.",
+        )
+
+    # Simulated performance must not become approved real-world learning.
+    snapshots = db.scalars(
+        select(PostPerformance).where(
+            PostPerformance.content_id == content.id
+        )
+    ).all()
+    if any(item.data_source == "simulated" for item in snapshots):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This post includes simulated performance data. "
+                "Its lessons cannot be approved as real-performance insights."
+            ),
+        )
+
     lesson.status = "approved"
     lesson.approved_at = func.now()
 
-    db.commit()
-    db.refresh(lesson)
+    try:
+        db.commit()
+        db.refresh(lesson)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not approve the lesson.",
+        ) from exc
 
     return {
         "id": str(lesson.id),
@@ -734,3 +913,46 @@ def approve_learning_lesson(
     }
 
 
+@app.post("/api/content/{content_id}/lessons/{lesson_id}/reject")
+def reject_learning_lesson(
+    content_id: uuid.UUID,
+    lesson_id: uuid.UUID,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    _, lesson = _get_owned_lesson(
+        content_id, lesson_id, current_user, db
+    )
+
+    if lesson.status == "rejected":
+        return {
+            "id": str(lesson.id),
+            "lesson": lesson.lesson,
+            "status": lesson.status,
+            "message": "Lesson is already rejected.",
+        }
+
+    if lesson.status == "approved":
+        raise HTTPException(
+            status_code=409,
+            detail="An approved lesson cannot be rejected.",
+        )
+
+    lesson.status = "rejected"
+    lesson.approved_at = None
+
+    try:
+        db.commit()
+        db.refresh(lesson)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not reject the lesson.",
+        ) from exc
+
+    return {
+        "id": str(lesson.id),
+        "lesson": lesson.lesson,
+        "status": lesson.status,
+    }
