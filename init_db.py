@@ -6,6 +6,7 @@ from models import (
     LearningLesson,
     PostPerformance,
     User,
+    ScheduledPost,
 )
 
 

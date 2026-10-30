@@ -15,5 +15,6 @@ class CreatorState(TypedDict):
     approved: bool
     audit_trail: list[str]
     initial_evaluation: NotRequired[dict[str, Any]]
+    revision_priorities: NotRequired[list[str]]
     final_evaluation: NotRequired[dict[str, Any]]
     evaluation_score_delta: NotRequired[int]

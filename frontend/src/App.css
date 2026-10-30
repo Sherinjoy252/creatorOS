@@ -430,3 +430,257 @@ footer {
   max-height: 600px;
   overflow-y: auto;
 }
+
+/* ===== Workspace navigation ===== */
+.workspace-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+  margin: 30px 0 22px;
+  padding: 8px;
+  box-sizing: border-box;
+  border: 1px solid #e0e4ee;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.workspace-tab {
+  min-width: 0;
+  min-height: 46px;
+  padding: 10px 8px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #555b70;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.workspace-tab:hover {
+  background: #f3f4ff;
+  color: #5148cf;
+}
+
+.workspace-tab.active {
+  background: #6258e8;
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(98, 88, 232, 0.18);
+}
+
+.studio .workspace-tab:focus-visible {
+  outline: 3px solid rgba(98, 88, 232, 0.3);
+  outline-offset: 2px;
+}
+
+@media (max-width: 680px) {
+  .workspace-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 380px) {
+  .workspace-tab {
+    padding: 9px 7px;
+    font-size: 12px;
+  }
+}
+
+/* ===== Inline post expansion in Add Metrics ===== */
+.metrics-history-item {
+  margin-bottom: 1rem;
+}
+
+.metrics-expanded-post {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #d7dce5;
+}
+
+.metrics-expanded-post > h3:first-child {
+  margin-top: 0;
+}
+
+.metrics-expanded-post .performance-panel {
+  text-align: left;
+}
+
+.metrics-expanded-post .performance-panel .post-input input,
+.metrics-expanded-post .performance-panel .post-input textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #cbd0dc;
+  border-radius: 8px;
+  color: #20243a;
+  background: #ffffff;
+  font: inherit;
+}
+
+.metrics-expanded-post .performance-panel .post-input label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+
+/* ===== AI-generated post visuals ===== */
+.post-image-section {
+  margin: 1.5rem 0;
+  padding: 1.1rem;
+  border: 1px solid #d8dce6;
+  border-radius: 12px;
+  background: #fbfcff;
+  text-align: left;
+}
+
+.post-image-section h4 {
+  margin: 0 0 0.75rem;
+  color: #20243a;
+}
+
+.generated-post-image {
+  display: block;
+  width: 100%;
+  max-width: 720px;
+  max-height: 620px;
+  margin: 0.75rem 0;
+  object-fit: contain;
+  border: 1px solid #e0e4ec;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.image-generate-button {
+  margin-top: 0.5rem;
+}
+
+.image-generate-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.image-loading-message {
+  margin-top: 0.75rem;
+}
+
+
+/* ===== Post scheduler ===== */
+.scheduler-panel {
+  text-align: left;
+}
+
+.scheduler-panel h3 {
+  margin-top: 1.75rem;
+}
+
+.scheduler-post-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.scheduler-post-item,
+.scheduled-item {
+  padding: 1rem;
+}
+
+.scheduler-post-item h4,
+.scheduled-item h4 {
+  margin: 0 0 0.5rem;
+}
+
+.scheduler-form-row {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.scheduler-form-row .post-input {
+  flex: 1 1 240px;
+  margin-top: 0.5rem;
+}
+
+.scheduler-form-row input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #cbd0dc;
+  border-radius: 8px;
+  color: #20243a;
+  background: #ffffff;
+  font: inherit;
+}
+
+.schedule-button {
+  width: auto;
+  min-width: 160px;
+  margin: 0 0 0.1rem;
+}
+
+.scheduler-list-heading {
+  border-top: 1px solid #d7dce5;
+  padding-top: 1.25rem;
+}
+
+.scheduled-item-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.schedule-status {
+  display: inline-block;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #eef0f5;
+  color: #41475a;
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.schedule-status.status-due {
+  background: #fff1d6;
+  color: #8a4b08;
+}
+
+.due-notification {
+  padding: 0.75rem;
+  border-left: 4px solid #d97706;
+  background: #fff8eb;
+  color: #75400a;
+  border-radius: 6px;
+}
+
+@media (max-width: 680px) {
+  .workspace-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .schedule-button {
+    width: 100%;
+  }
+}
+
+
+.scheduler-alert {
+  margin: 1rem 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid #f0c36d;
+  border-left: 4px solid #d97706;
+  border-radius: 10px;
+  background: #fff8eb;
+  color: #75400a;
+  text-align: left;
+}
+
+.scheduler-alert .secondary-button {
+  display: block;
+  margin-top: 0.75rem;
+}

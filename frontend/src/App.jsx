@@ -90,6 +90,7 @@ function EvaluationPanel({ initialEvaluation, finalEvaluation, scoreDelta }) {
 
 function App() {
   const [user, setUser] = useState(null);
+  const [activeSection, setActiveSection] = useState("brand-voice");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [posts, setPosts] = useState(emptyPosts);
@@ -100,6 +101,8 @@ function App() {
   const [topic, setTopic] = useState("");
   const [generatedContent, setGeneratedContent] = useState(null);
   const [contentGenerating, setContentGenerating] = useState(false);
+  const [imageGeneratingId, setImageGeneratingId] = useState("");
+  const [imageError, setImageError] = useState("");
   const [contentHistory, setContentHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedHistoryItem, setSelectedHistoryItem] = useState(null);
@@ -117,6 +120,12 @@ function App() {
   const [learningLessons, setLearningLessons] = useState([]);
   const [lessonsLoading, setLessonsLoading] = useState(false);
   const [lessonActionId, setLessonActionId] = useState("");
+  const [scheduledPosts, setScheduledPosts] = useState([]);
+  const [scheduleDateTimes, setScheduleDateTimes] = useState({});
+  const [scheduleLoadingId, setScheduleLoadingId] = useState("");
+  const [scheduleMessage, setScheduleMessage] = useState("");
+  const [approvalLoadingId, setApprovalLoadingId] = useState("");
+  const [approvalMessage, setApprovalMessage] = useState("");
 
   async function loadUser() {
     try {
@@ -170,7 +179,16 @@ function App() {
     if (user) {
       loadBrandVoice();
       loadContentHistory();
+      loadScheduledPosts();
     }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const intervalId = window.setInterval(() => {
+      loadScheduledPosts();
+    }, 15000);
+    return () => window.clearInterval(intervalId);
   }, [user]);
 
   function handleLogin() {
@@ -194,6 +212,9 @@ function App() {
         setTopic("");
         setGeneratedContent(null);
         setContentHistory([]);
+        setScheduledPosts([]);
+        setScheduleDateTimes({});
+        setScheduleMessage("");
         setSelectedHistoryItem(null);
         setPerformanceHistory([]);
         setLearningLessons([]);
@@ -318,6 +339,105 @@ function App() {
     }
   }
 
+  async function handleGenerateImage(content) {
+    if (!content?.id || imageGeneratingId) return;
+
+    setImageError("");
+    setImageGeneratingId(content.id);
+
+    try {
+      const response = await fetch(
+        `/api/content/${content.id}/generate-image`,
+        {
+          method: "POST",
+          credentials: "include",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data.detail === "string"
+            ? data.detail
+            : "Unable to generate an image. Please try again."
+        );
+      }
+
+      const updatedContent = {
+        ...content,
+        image_status: data.image_status || "ready",
+        image_url: data.image_url || `/api/content/${content.id}/image`,
+      };
+
+      setGeneratedContent((current) =>
+        current?.id === content.id ? updatedContent : current
+      );
+      setContentHistory((current) =>
+        current.map((item) =>
+          item.id === content.id ? { ...item, ...updatedContent } : item
+        )
+      );
+      setSelectedHistoryItem((current) =>
+        current?.id === content.id ? { ...current, ...updatedContent } : current
+      );
+    } catch (err) {
+      setImageError(err.message || "Unable to generate an image. Please try again.");
+    } finally {
+      setImageGeneratingId("");
+    }
+  }
+
+  function renderPostImage(content) {
+    if (!content?.id) return null;
+
+    const isGenerating = imageGeneratingId === content.id;
+    const hasImage =
+      content.image_status === "ready" &&
+      content.image_url;
+
+    return (
+      <section className="post-image-section">
+        <h4>Generated visual</h4>
+
+        {hasImage ? (
+          <img
+            className="generated-post-image"
+            src={content.image_url}
+            alt={`Visual for ${content.topic || "generated LinkedIn post"}`}
+            loading="lazy"
+          />
+        ) : (
+          <p className="profile-description">
+            Generate a visual based on this post. CreatorOS will choose a suitable
+            style automatically.
+          </p>
+        )}
+
+        {!hasImage && (
+          <button
+            type="button"
+            className="secondary-button image-generate-button"
+            onClick={() => handleGenerateImage(content)}
+            disabled={isGenerating || Boolean(imageGeneratingId)}
+          >
+            {isGenerating ? "Generating image..." : "Generate Image"}
+          </button>
+        )}
+
+        {isGenerating && (
+          <p className="profile-description image-loading-message">
+            Creating your visual with AI. This may take a little while.
+          </p>
+        )}
+
+        {imageError && (
+          <p className="error-message" role="alert">{imageError}</p>
+        )}
+      </section>
+    );
+  }
+
   async function loadLearningLessons(contentId) {
     setLessonsLoading(true);
     try {
@@ -396,6 +516,7 @@ function App() {
     }
 
     setSelectedHistoryItem(item);
+    setApprovalMessage("");
     setLearningLessons([]);
     loadLearningLessons(item.id);
     setPerformanceHistory([]);
@@ -567,277 +688,145 @@ function App() {
     }
   }
 
-  if (loading) {
-    return (
-      <main className="login-page">
-        <p>Loading CreatorOS...</p>
-      </main>
-    );
+  async function loadScheduledPosts() {
+    try {
+      const response = await fetch("/api/scheduled-posts", {
+        credentials: "include",
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setScheduledPosts(data);
+      } else if (response.status === 401) {
+        setError("Your session has expired. Please sign in again.");
+      }
+    } catch {
+      setError("Unable to refresh scheduled posts.");
+    }
   }
 
-  if (user) {
-    return (
-      <main className="login-page">
-        <nav className="navbar">
-          <div className="brand">
-            <span className="brand-icon">C</span>
-            <span>CreatorOS</span>
-          </div>
+  async function handleApprovePost(content) {
+    if (!content?.id || approvalLoadingId) return;
 
-          <button className="logout-button" onClick={handleLogout}>
-            Logout
-          </button>
-        </nav>
+    setError("");
+    setApprovalMessage("");
+    setApprovalLoadingId(content.id);
 
-        <section className="hero studio">
-          <div className="hero-badge">
-            <span className="status-dot" />
-            Your workspace
-          </div>
+    try {
+      const response = await fetch(`/api/content/${content.id}/approve`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = await response.json();
 
-          <h1>
-            Welcome back,
-            <br />
-            <span>{user.name || "Creator"}.</span>
-          </h1>
+      if (!response.ok) {
+        throw new Error(
+          typeof data.detail === "string"
+            ? data.detail
+            : "Unable to approve this post."
+        );
+      }
 
-          <p className="subtitle">
-            Let's teach CreatorOS how you write, using your existing LinkedIn
-            posts.
-          </p>
+      setContentHistory((current) =>
+        current.map((item) =>
+          item.id === content.id ? { ...item, approved: true } : item
+        )
+      );
+      setSelectedHistoryItem((current) =>
+        current?.id === content.id ? { ...current, approved: true } : current
+      );
+      setGeneratedContent((current) =>
+        current?.id === content.id ? { ...current, approved: true } : current
+      );
+      setApprovalMessage(data.message || "Post approved. It is now available in Scheduler.");
+      await loadScheduledPosts();
+    } catch (err) {
+      setApprovalMessage(err.message || "Unable to approve this post.");
+    } finally {
+      setApprovalLoadingId("");
+    }
+  }
 
-          <form className="brand-voice-form" onSubmit={handleGenerate}>
-            <h2>
-              {hasProfile ? "Update your brand voice" : "Build your brand voice"}
-            </h2>
+  async function handleSchedulePost(content) {
+    const localDateTime = scheduleDateTimes[content.id];
+    if (!localDateTime) {
+      setScheduleMessage("Choose a date and time before scheduling.");
+      return;
+    }
 
-            <p>
-              Paste 3–10 of your existing posts. We'll analyze your writing
-              style and save a reusable profile for future content.
-            </p>
+    const scheduledAt = new Date(localDateTime);
+    if (Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) {
+      setScheduleMessage("Choose a date and time in the future.");
+      return;
+    }
 
-            {posts.map((post, index) => (
-              <div className="post-input" key={index}>
-                <label htmlFor={`sample-post-${index}`}>
-                  Sample post {index + 1}
-                </label>
+    setScheduleLoadingId(content.id);
+    setScheduleMessage("");
+    try {
+      const response = await fetch(`/api/content/${content.id}/schedule`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduled_at: scheduledAt.toISOString() }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          typeof data.detail === "string" ? data.detail : "Unable to schedule this post."
+        );
+      }
+      setScheduleMessage(`Post "${content.topic}" scheduled successfully.`);
+      setScheduleDateTimes((current) => ({ ...current, [content.id]: "" }));
+      await loadScheduledPosts();
+    } catch (err) {
+      setScheduleMessage(err.message || "Unable to schedule this post.");
+    } finally {
+      setScheduleLoadingId("");
+    }
+  }
 
-                <textarea
-                  id={`sample-post-${index}`}
-                  value={post}
-                  onChange={(event) => updatePost(index, event.target.value)}
-                  placeholder="Paste one of your LinkedIn posts here..."
-                  rows={4}
-                  required={index < 3}
-                />
+  async function handleMarkPublished(scheduleId) {
+    setScheduleMessage("");
+    try {
+      const response = await fetch(
+        `/api/scheduled-posts/${scheduleId}/mark-published`,
+        { method: "POST", credentials: "include" }
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          typeof data.detail === "string"
+            ? data.detail
+            : "Unable to mark this post as published."
+        );
+      }
+      setScheduleMessage(data.message || "Post marked as published.");
+      await loadScheduledPosts();
+    } catch (err) {
+      setScheduleMessage(err.message || "Unable to update this scheduled post.");
+    }
+  }
 
-                {posts.length > 3 && (
-                  <button
-                    type="button"
-                    className="remove-post-button"
-                    onClick={() => removePost(index)}
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-            ))}
+  async function handleCancelSchedule(scheduleId) {
+    setScheduleMessage("");
+    try {
+      const response = await fetch(`/api/scheduled-posts/${scheduleId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          typeof data.detail === "string" ? data.detail : "Unable to cancel schedule."
+        );
+      }
+      setScheduleMessage("Schedule cancelled.");
+      await loadScheduledPosts();
+    } catch (err) {
+      setScheduleMessage(err.message || "Unable to cancel schedule.");
+    }
+  }
 
-            {posts.length < 10 && (
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={addPost}
-              >
-                + Add another post
-              </button>
-            )}
-
-            <button
-              type="submit"
-              className="linkedin-button generate-button"
-              disabled={generating}
-            >
-              {generating
-                ? "Analyzing your writing..."
-                : hasProfile
-                  ? "Regenerate brand voice"
-                  : "Generate my brand voice"}
-            </button>
-          </form>
-
-          {error && <p className="error-message">{error}</p>}
-
-          {savingMessage && (
-            <p className="success-message">{savingMessage}</p>
-          )}
-
-          {profile && (
-            <section className="profile-panel">
-              <h2>Your brand voice profile</h2>
-
-              <p className="profile-description">
-                This profile will guide CreatorOS when generating your content.
-              </p>
-
-              <pre className="profile-content">{profile}</pre>
-            </section>
-          )}
-
-          {/* Create LinkedIn content */}
-          {hasProfile && (
-            <section className="profile-panel content-studio">
-              <h2>Create LinkedIn content</h2>
-
-              <p className="profile-description">
-                Choose a topic. CreatorOS will plan, write, review, and refine
-                a post using your saved brand voice.
-              </p>
-
-              <form onSubmit={handleGenerateContent}>
-                <label htmlFor="content-topic">
-                  What do you want to write about?
-                </label>
-
-                <textarea
-                  id="content-topic"
-                  value={topic}
-                  onChange={(event) => setTopic(event.target.value)}
-                  placeholder="For example: How Spring Boot dependency injection works"
-                  rows={3}
-                  minLength={3}
-                  maxLength={300}
-                  required
-                />
-
-                <button
-                  type="submit"
-                  className="linkedin-button generate-button"
-                  disabled={contentGenerating}
-                >
-                  {contentGenerating
-                    ? "Creating your post..."
-                    : "Generate post"}
-                </button>
-              </form>
-
-              {generatedContent && (
-                <div className="generated-content">
-                  <h3>Generated LinkedIn post</h3>
-
-                  <p>
-                    Approval status:{" "}
-                    <strong>
-                      {generatedContent.approved ? "Approved" : "Needs review"}
-                    </strong>
-                  </p>
-
-                  <p>
-                    Revisions:{" "}
-                    <strong>{generatedContent.revision_count}</strong>
-                  </p>
-
-                  <pre className="profile-content">
-                    {generatedContent.draft}
-                  </pre>
-
-                  <h3>Strategist's approach</h3>
-
-                  <p>
-                    <strong>Angle:</strong>{" "}
-                    {generatedContent.strategist_angle}
-                  </p>
-
-                  <p>
-                    <strong>Reason:</strong>{" "}
-                    {generatedContent.strategy_reason}
-                  </p>
-
-                  <h3>Agent audit trail</h3>
-
-                  <ol>
-                    {generatedContent.audit_trail?.map((entry, index) => (
-                      <li key={index}>{entry}</li>
-                    ))}
-                  </ol>
-
-                  <EvaluationPanel
-                    initialEvaluation={generatedContent.initial_evaluation}
-                    finalEvaluation={generatedContent.final_evaluation}
-                    scoreDelta={generatedContent.evaluation_score_delta}
-                  />
-                </div>
-              )}
-            </section>
-          )}
-
-          {/* Content History: each selected post expands directly in its own card. */}
-          <section className="profile-panel content-studio">
-            <h2>Content History</h2>
-
-            {historyLoading && <p>Loading saved posts...</p>}
-
-            {!historyLoading && contentHistory.length === 0 && (
-              <p>No saved posts yet. Generate your first post above.</p>
-            )}
-
-            <div className="content-history-list">
-              {contentHistory.map((item) => {
-                const isExpanded = selectedHistoryItem?.id === item.id;
-
-                return (
-                  <article key={item.id} className="history-item">
-                    <h3>{item.topic}</h3>
-
-                    <p>
-                      Status: {item.approved ? "Approved" : "Needs review"}
-                      {" · "}
-                      Revisions: {item.revision_count}
-                    </p>
-
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => handleSelectHistoryItem(item)}
-                    >
-                      {isExpanded ? "Hide post" : "View post"}
-                    </button>
-
-                    {isExpanded && (
-                      <div className="generated-content expanded-post">
-                        <h3>Generated post</h3>
-
-                        <p>
-                          Approval status:{" "}
-                          <strong>
-                            {selectedHistoryItem.approved ? "Approved" : "Needs review"}
-                          </strong>
-                        </p>
-
-                        <pre className="profile-content">
-                          {selectedHistoryItem.draft}
-                        </pre>
-
-                        <h4>Strategist's approach</h4>
-                        <p>
-                          <strong>Angle:</strong>{" "}
-                          {selectedHistoryItem.strategist_angle}
-                        </p>
-                        <p>{selectedHistoryItem.strategy_reason}</p>
-
-                        <h4>Audit trail</h4>
-                        <ol>
-                          {selectedHistoryItem.audit_trail?.map((entry, index) => (
-                            <li key={index}>{entry}</li>
-                          ))}
-                        </ol>
-
-                        <EvaluationPanel
-                          initialEvaluation={selectedHistoryItem.initial_evaluation}
-                          finalEvaluation={selectedHistoryItem.final_evaluation}
-                          scoreDelta={selectedHistoryItem.evaluation_score_delta}
-                        />
-
+  const performancePanel = selectedHistoryItem ? (
                         <section
                           className="performance-panel"
                           style={{
@@ -1014,6 +1003,360 @@ function App() {
                             </article>
                           ))}
                         </section>
+  ) : (
+    <p>Select a post below to view or add its performance metrics.</p>
+  );
+
+  if (loading) {
+    return (
+      <main className="login-page">
+        <p>Loading CreatorOS...</p>
+      </main>
+    );
+  }
+
+  if (user) {
+    return (
+      <main className="login-page">
+        <nav className="navbar">
+          <div className="brand">
+            <span className="brand-icon">C</span>
+            <span>CreatorOS</span>
+          </div>
+
+          <button className="logout-button" onClick={handleLogout}>
+            Logout
+          </button>
+        </nav>
+
+        <section className="hero studio">
+          <div className="hero-badge">
+            <span className="status-dot" />
+            Your workspace
+          </div>
+
+          <h1>
+            Welcome back,
+            <br />
+            <span>{user.name || "Creator"}.</span>
+          </h1>
+
+          <p className="subtitle">
+            Manage your brand voice, create posts, review your content, and track performance.
+          </p>
+
+          <nav className="workspace-tabs" aria-label="CreatorOS workspace">
+            {[
+              ["brand-voice", "Brand Voice"],
+              ["generate", "Generate Post"],
+              ["posts", "See Posts"],
+              ["metrics", "Add Metrics"],
+              ["scheduler", "Scheduler"],
+            ].map(([section, label]) => (
+              <button
+                key={section}
+                type="button"
+                className={`workspace-tab ${activeSection === section ? "active" : ""}`}
+                onClick={() => setActiveSection(section)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+
+          {scheduledPosts.some((schedule) => schedule.status === "due") && (
+            <div className="scheduler-alert" role="status">
+              <strong>
+                {scheduledPosts.filter((schedule) => schedule.status === "due").length} scheduled post(s) are due.
+              </strong>
+              {" "}Open Scheduler to review them and publish manually on LinkedIn.
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setActiveSection("scheduler")}
+              >
+                View due posts
+              </button>
+            </div>
+          )}
+
+          {activeSection === "brand-voice" && (
+          <>
+          <form className="brand-voice-form" onSubmit={handleGenerate}>
+            <h2>
+              {hasProfile ? "Update your brand voice" : "Build your brand voice"}
+            </h2>
+
+            <p>
+              Paste 3–10 of your existing posts. We'll analyze your writing
+              style and save a reusable profile for future content.
+            </p>
+
+            {posts.map((post, index) => (
+              <div className="post-input" key={index}>
+                <label htmlFor={`sample-post-${index}`}>
+                  Sample post {index + 1}
+                </label>
+
+                <textarea
+                  id={`sample-post-${index}`}
+                  value={post}
+                  onChange={(event) => updatePost(index, event.target.value)}
+                  placeholder="Paste one of your LinkedIn posts here..."
+                  rows={4}
+                  required={index < 3}
+                />
+
+                {posts.length > 3 && (
+                  <button
+                    type="button"
+                    className="remove-post-button"
+                    onClick={() => removePost(index)}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            ))}
+
+            {posts.length < 10 && (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={addPost}
+              >
+                + Add another post
+              </button>
+            )}
+
+            <button
+              type="submit"
+              className="linkedin-button generate-button"
+              disabled={generating}
+            >
+              {generating
+                ? "Analyzing your writing..."
+                : hasProfile
+                  ? "Regenerate brand voice"
+                  : "Generate my brand voice"}
+            </button>
+          </form>
+
+          {error && <p className="error-message">{error}</p>}
+
+          {savingMessage && (
+            <p className="success-message">{savingMessage}</p>
+          )}
+
+          {profile && (
+            <section className="profile-panel">
+              <h2>Your brand voice profile</h2>
+
+              <p className="profile-description">
+                This profile will guide CreatorOS when generating your content.
+              </p>
+
+              <pre className="profile-content">{profile}</pre>
+            </section>
+          )}
+          </>
+          )}
+
+          {/* Create LinkedIn content */}
+          {activeSection === "generate" && (
+          <>
+          {!hasProfile && (
+            <p className="profile-panel">Create your brand voice first to generate posts.</p>
+          )}
+          {hasProfile && (
+            <section className="profile-panel content-studio">
+              <h2>Create LinkedIn content</h2>
+
+              <p className="profile-description">
+                Choose a topic. CreatorOS will plan, write, review, and refine
+                a post using your saved brand voice.
+              </p>
+
+              <form onSubmit={handleGenerateContent}>
+                <label htmlFor="content-topic">
+                  What do you want to write about?
+                </label>
+
+                <textarea
+                  id="content-topic"
+                  value={topic}
+                  onChange={(event) => setTopic(event.target.value)}
+                  placeholder="For example: How Spring Boot dependency injection works"
+                  rows={3}
+                  minLength={3}
+                  maxLength={300}
+                  required
+                />
+
+                <button
+                  type="submit"
+                  className="linkedin-button generate-button"
+                  disabled={contentGenerating}
+                >
+                  {contentGenerating
+                    ? "Creating your post..."
+                    : "Generate post"}
+                </button>
+              </form>
+
+              {generatedContent && (
+                <div className="generated-content">
+                  <h3>Generated LinkedIn post</h3>
+                  {renderPostImage(generatedContent)}
+                  <p>
+                    Approval status:{" "}
+                    <strong>
+                      {generatedContent.approved ? "Approved" : "Needs review"}
+                    </strong>
+                  </p>
+
+                  <p>
+                    Revisions:{" "}
+                    <strong>{generatedContent.revision_count}</strong>
+                  </p>
+                  
+                  <pre className="profile-content">
+                    {generatedContent.draft}
+                  </pre>
+
+                  <h3>Strategist's approach</h3>
+
+                  <p>
+                    <strong>Angle:</strong>{" "}
+                    {generatedContent.strategist_angle}
+                  </p>
+
+                  <p>
+                    <strong>Reason:</strong>{" "}
+                    {generatedContent.strategy_reason}
+                  </p>
+
+                  <h3>Agent audit trail</h3>
+
+                  <ol>
+                    {generatedContent.audit_trail?.map((entry, index) => (
+                      <li key={index}>{entry}</li>
+                    ))}
+                  </ol>
+
+                  <EvaluationPanel
+                    initialEvaluation={generatedContent.initial_evaluation}
+                    finalEvaluation={generatedContent.final_evaluation}
+                    scoreDelta={generatedContent.evaluation_score_delta}
+                  />
+                </div>
+              )}
+            </section>
+          )}
+          </>
+          )}
+
+          {/* Content History */}
+          {activeSection === "posts" && (
+          <section className="profile-panel content-studio">
+            <h2>Content History</h2>
+
+            {historyLoading && <p>Loading saved posts...</p>}
+
+            {!historyLoading && contentHistory.length === 0 && (
+              <p>No saved posts yet. Generate your first post above.</p>
+            )}
+
+            <div className="content-history-list">
+              {contentHistory.map((item) => {
+                const isExpanded = selectedHistoryItem?.id === item.id;
+
+                return (
+                  <article key={item.id} className="history-item">
+                    <h3>{item.topic}</h3>
+
+                    <p>
+                      Status: {item.approved ? "Approved" : "Needs review"}
+                      {" · "}
+                      Revisions: {item.revision_count}
+                    </p>
+
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() =>
+                        setSelectedHistoryItem((current) =>
+                          current?.id === item.id ? null : item
+                        )
+                      }
+                      aria-expanded={isExpanded}
+                    >
+                      {isExpanded ? "Hide Post" : "View Post"}
+                    </button>
+
+                    {isExpanded && (
+                      <div className="generated-content expanded-post">
+                        {renderPostImage(selectedHistoryItem)}
+                        <h3>Generated post</h3>
+
+                        <p>
+                          Approval status:{" "}
+                          <strong>
+                            {selectedHistoryItem.approved ? "Approved" : "Needs review"}
+                          </strong>
+                        </p>
+
+                        {!selectedHistoryItem.approved && (
+                          <button
+                            type="button"
+                            className="linkedin-button"
+                            disabled={approvalLoadingId === selectedHistoryItem.id}
+                            onClick={() => handleApprovePost(selectedHistoryItem)}
+                          >
+                            {approvalLoadingId === selectedHistoryItem.id
+                              ? "Approving..."
+                              : "Approve Post"}
+                          </button>
+                        )}
+
+                        {approvalMessage && (
+                          <p
+                            className={
+                              selectedHistoryItem.approved
+                                ? "success-message"
+                                : "error-message"
+                            }
+                            role="status"
+                          >
+                            {approvalMessage}
+                          </p>
+                        )}
+
+                        <pre className="profile-content">
+                          {selectedHistoryItem.draft}
+                        </pre>
+
+                        <h4>Strategist's approach</h4>
+                        <p>
+                          <strong>Angle:</strong>{" "}
+                          {selectedHistoryItem.strategist_angle}
+                        </p>
+                        <p>{selectedHistoryItem.strategy_reason}</p>
+
+                        <h4>Audit trail</h4>
+                        <ol>
+                          {selectedHistoryItem.audit_trail?.map((entry, index) => (
+                            <li key={index}>{entry}</li>
+                          ))}
+                        </ol>
+
+                        <EvaluationPanel
+                          initialEvaluation={selectedHistoryItem.initial_evaluation}
+                          finalEvaluation={selectedHistoryItem.final_evaluation}
+                          scoreDelta={selectedHistoryItem.evaluation_score_delta}
+                        />
+
+
                       </div>
                     )}
                   </article>
@@ -1021,6 +1364,164 @@ function App() {
               })}
             </div>
           </section>
+          )}
+
+          {activeSection === "metrics" && (
+            <section className="profile-panel content-studio">
+              <h2>Add Performance Metrics</h2>
+              <p className="profile-description">
+                Select a generated post to add its LinkedIn metrics and review its learning suggestions.
+              </p>
+              {historyLoading && <p>Loading saved posts...</p>}
+              {!historyLoading && contentHistory.length === 0 && (
+                <p>No saved posts yet. Generate your first post before adding metrics.</p>
+              )}
+              <div className="content-history-list">
+                {contentHistory.map((item) => {
+                  const isExpanded = selectedHistoryItem?.id === item.id;
+
+                  return (
+                    <article className="history-item metrics-history-item" key={item.id}>
+                      <h3>{item.topic}</h3>
+                      <p>Status: {item.approved ? "Approved" : "Needs review"}</p>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => handleSelectHistoryItem(item)}
+                        aria-expanded={isExpanded}
+                      >
+                        {isExpanded ? "Hide metrics" : "Add / View metrics"}
+                      </button>
+
+                      {isExpanded && (
+                        <div className="generated-content expanded-post metrics-expanded-post">
+                          {performancePanel}
+                          {renderPostImage(selectedHistoryItem)}
+                          <h3>Generated post</h3>
+                          <pre className="profile-content">{selectedHistoryItem.draft}</pre>
+
+                          <EvaluationPanel
+                            initialEvaluation={selectedHistoryItem.initial_evaluation}
+                            finalEvaluation={selectedHistoryItem.final_evaluation}
+                            scoreDelta={selectedHistoryItem.evaluation_score_delta}
+                          />
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {activeSection === "scheduler" && (
+            <section className="profile-panel content-studio scheduler-panel">
+              <h2>Post Scheduler</h2>
+              <p className="profile-description">
+                Schedule approved posts and receive an in-app notification when they are due.
+                CreatorOS will not publish to LinkedIn yet.
+              </p>
+
+              {scheduleMessage && (
+                <p className={scheduleMessage.toLowerCase().includes("success") || scheduleMessage.toLowerCase().includes("cancelled") ? "success-message" : "error-message"}>
+                  {scheduleMessage}
+                </p>
+              )}
+
+              <h3>Schedule an approved post</h3>
+              {historyLoading && <p>Loading saved posts...</p>}
+              {!historyLoading && contentHistory.filter((item) => item.approved).length === 0 && (
+                <p>No approved posts are available to schedule yet.</p>
+              )}
+              <div className="scheduler-post-list">
+                {contentHistory.filter((item) => item.approved).map((item) => {
+                  const activeSchedule = scheduledPosts.find(
+                    (schedule) => schedule.content_id === item.id && ["scheduled", "due"].includes(schedule.status)
+                  );
+                  return (
+                    <article className="history-item scheduler-post-item" key={item.id}>
+                      <h4>{item.topic}</h4>
+                      {activeSchedule ? (
+                        <p>
+                          Already {activeSchedule.status === "due" ? "due" : "scheduled"} for{" "}
+                          <strong>{new Date(activeSchedule.scheduled_at).toLocaleString()}</strong>.
+                        </p>
+                      ) : (
+                        <div className="scheduler-form-row">
+                          <div className="post-input">
+                            <label htmlFor={`schedule-${item.id}`}>Date and time</label>
+                            <input
+                              id={`schedule-${item.id}`}
+                              type="datetime-local"
+                              min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                              value={scheduleDateTimes[item.id] || ""}
+                              onChange={(event) => setScheduleDateTimes((current) => ({
+                                ...current,
+                                [item.id]: event.target.value,
+                              }))}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            className="linkedin-button schedule-button"
+                            disabled={scheduleLoadingId === item.id}
+                            onClick={() => handleSchedulePost(item)}
+                          >
+                            {scheduleLoadingId === item.id ? "Scheduling..." : "Schedule Post"}
+                          </button>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+
+              <h3 className="scheduler-list-heading">Scheduled posts and notifications</h3>
+              {scheduledPosts.length === 0 ? (
+                <p>No scheduled posts yet.</p>
+              ) : (
+                <div className="scheduler-post-list">
+                  {scheduledPosts.map((schedule) => (
+                    <article className={`history-item scheduled-item status-${schedule.status}`} key={schedule.id}>
+                      <div className="scheduled-item-heading">
+                        <h4>{schedule.topic}</h4>
+                        <span className={`schedule-status status-${schedule.status}`}>
+                          {schedule.status === "due" ? "Due — awaiting publishing" : schedule.status}
+                        </span>
+                      </div>
+                      <p>Scheduled for: <strong>{new Date(schedule.scheduled_at).toLocaleString()}</strong></p>
+                      {schedule.status === "due" && (
+                        <>
+                          <p className="due-notification" role="status">
+                            This post is due. After publishing it manually on LinkedIn, mark it as published here to clear the notification.
+                          </p>
+                          <button
+                            type="button"
+                            className="linkedin-button"
+                            onClick={() => handleMarkPublished(schedule.id)}
+                          >
+                            Mark as published
+                          </button>
+                        </>
+                      )}
+                      {schedule.status === "published" && (
+                        <p className="success-message">Marked as published.</p>
+                      )}
+                      {schedule.status === "scheduled" && (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => handleCancelSchedule(schedule.id)}
+                        >
+                          Cancel schedule
+                        </button>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
         </section>
 
 

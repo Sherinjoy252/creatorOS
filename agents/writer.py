@@ -1,6 +1,37 @@
-
 from graph.state import CreatorState
 from services.ai_service import AIService
+
+
+def _build_revision_context(state: CreatorState) -> str:
+    initial_evaluation = state.get("initial_evaluation") or {}
+    priorities = state.get("revision_priorities", [])
+
+    if not initial_evaluation and not priorities:
+        return "No initial self-evaluation priorities are available."
+
+    lines = []
+    if initial_evaluation.get("score") is not None:
+        lines.append(f"Initial draft score: {initial_evaluation['score']}/100")
+
+    if priorities:
+        lines.append("Priorities identified by the initial evaluator:")
+        lines.extend(f"- {priority}" for priority in priorities)
+
+    criteria = initial_evaluation.get("criteria", {})
+    strong = []
+    for key, item in criteria.items():
+        max_score = item.get("max_score", 0)
+        score = item.get("score", 0)
+        if max_score and score / max_score >= 0.9:
+            strong.append(key)
+
+    if strong:
+        lines.append(
+            "Preserve these already-strong areas unless a factual or editorial issue requires a change: "
+            + ", ".join(strong)
+        )
+
+    return "\n".join(lines)
 
 
 def writer_node(state: CreatorState) -> dict:
@@ -13,6 +44,8 @@ def writer_node(state: CreatorState) -> dict:
         if approved_lessons
         else "No approved performance lessons are available yet."
     )
+
+    revision_context = _build_revision_context(state)
 
     common_instructions = f"""
 Create an educational LinkedIn post about: {state['topic']}
@@ -53,23 +86,25 @@ with technical accuracy.
 Editor feedback:
 {state['critique']}
 
+Initial self-evaluation and revision priorities:
+{revision_context}
+
 Previous draft:
 {state['draft']}
 
 {common_instructions}
 
-Make meaningful improvements. Preserve correct information and useful
-examples, but rewrite weak or repetitive sections rather than merely
-changing a few words.
-
-Ensure all code examples are technically correct and demonstrate
-what the explanation claims. Prefer try-with-resources for Java
-resource management when appropriate. Avoid repetitive headings,
-multiple conclusions, excessive emojis, and repeated calls to action.
-Follow the supplied brand voice rather than using generic
-motivational language.
-
-Ensure the content and examples directly address the requested topic.
+Revision requirements:
+- Address the valid initial-evaluation priorities, not just the latest editor comments.
+- Preserve correct information, useful examples, and sections that already work well.
+- Do not make unrelated changes merely to increase a numerical score.
+- Make meaningful improvements rather than merely changing a few words.
+- Ensure all code examples are technically correct and demonstrate
+  what the explanation claims. Prefer try-with-resources for Java
+  resource management when appropriate.
+- Avoid repetitive headings, multiple conclusions, excessive emojis,
+  and repeated calls to action.
+- Ensure the content and examples directly address the requested topic.
 """
     else:
         task = common_instructions
@@ -95,5 +130,9 @@ Ensure the content and examples directly address the requested topic.
         "audit_trail": state["audit_trail"] + [
             f"Writer {action} ({len(draft)} characters).",
             f"Writer considered {len(approved_lessons)} approved learning lessons.",
+            (
+                f"Writer considered {len(state.get('revision_priorities', []))} "
+                "initial-evaluation revision priorities."
+            ),
         ],
     }

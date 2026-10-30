@@ -4,24 +4,29 @@ import re
 from collections.abc import Generator
 from uuid import UUID
 import uuid
+from datetime import datetime, timezone
 
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 import httpx
 from authlib.integrations.starlette_client import OAuth
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 
 from database import SessionLocal
 from models import GeneratedContent, LearningLesson, PostPerformance, User
+from models.scheduled_post import ScheduledPost
 from services.user_service import get_or_create_user
 from pydantic import BaseModel, Field
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from graph.creator_graph import build_creator_graph
 from services.brand_voice_service import BrandVoiceService
 from services.learning_service import LearningService
+from services.image_generation_service import ImageGenerationService
+from services.image_storage_service import ImageStorageService
 
 
 load_dotenv()
@@ -44,6 +49,52 @@ if not SESSION_SECRET:
 
 
 app = FastAPI(title="CreatorOS API")
+
+
+# The database is the source of truth for schedules. APScheduler only runs
+# a lightweight poller that marks due records, so pending schedules survive restarts.
+scheduler = BackgroundScheduler(timezone="UTC")
+
+
+def mark_due_scheduled_posts() -> None:
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        try:
+            db.execute(
+                update(ScheduledPost)
+                .where(
+                    ScheduledPost.status == "scheduled",
+                    ScheduledPost.scheduled_at <= now,
+                )
+                .values(status="due", notified_at=now)
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            # Keep the scheduler alive; the next poll will retry.
+            import logging
+            logging.exception("Could not update due scheduled posts.")
+
+
+@app.on_event("startup")
+def start_scheduler() -> None:
+    if not scheduler.running:
+        scheduler.add_job(
+            mark_due_scheduled_posts,
+            trigger="interval",
+            seconds=10,
+            id="mark_due_scheduled_posts",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.start()
+
+
+@app.on_event("shutdown")
+def stop_scheduler() -> None:
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
 
 app.add_middleware(
     SessionMiddleware,
@@ -116,6 +167,10 @@ class BrandVoiceRequest(BaseModel):
 
 class ContentGenerationRequest(BaseModel):
     topic: str = Field(min_length=3, max_length=300)
+
+
+class SchedulePostRequest(BaseModel):
+    scheduled_at: datetime
 
 class PerformanceInput(BaseModel):
     impressions: int = Field(ge=0)
@@ -431,7 +486,349 @@ def generate_content(
         "initial_evaluation": content.initial_evaluation,
         "final_evaluation": content.final_evaluation,
         "evaluation_score_delta": content.evaluation_score_delta,
+        "image_status": content.image_status,
+        "image_url": (
+            f"/api/content/{content.id}/image"
+            if content.image_status == "ready" else None
+        ),
         "created_at": content.created_at,
+    }
+
+
+@app.post("/api/content/{content_id}/generate-image")
+def generate_content_image(
+    content_id: uuid.UUID,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate and persist one visual for a post owned by the signed-in user."""
+    content = db.scalar(
+        select(GeneratedContent).where(
+            GeneratedContent.id == content_id,
+            GeneratedContent.user_id == current_user.id,
+        )
+    )
+
+    if content is None:
+        raise HTTPException(status_code=404, detail="Content not found")
+
+    # Reuse an existing image rather than charging for another generation.
+    if content.image_status == "ready" and content.image_path:
+        storage = ImageStorageService()
+        if storage.exists(content.image_path):
+            return {
+                "content_id": str(content.id),
+                "image_status": content.image_status,
+                "image_url": f"/api/content/{content.id}/image",
+                "image_model": content.image_model,
+                "image_prompt": content.image_prompt,
+                "message": "An image already exists for this post.",
+            }
+
+    # Build a content-aware prompt without an additional LLM request.
+    # FLUX is instructed to choose an appropriate visual treatment itself.
+    prompt = (
+        "Create one polished, professional LinkedIn visual based on the post below. "
+        "Choose the visual treatment that best fits the subject: for technical topics, "
+        "use a clear editorial diagram or conceptual illustration; for business topics, "
+        "use a clean data-led or editorial visual; for people/process topics, use a "
+        "relevant conceptual illustration. Use strong visual hierarchy, balanced "
+        "composition, readable visual elements, and a restrained professional palette. "
+        "Avoid tiny text, logos, watermarks, signatures, and decorative clutter. "
+        "Do not reproduce the entire post as text.\n\n"
+        f"Topic: {content.topic}\n\n"
+        f"LinkedIn post:\n{content.draft[:6000]}"
+    )
+
+    content.image_status = "generating"
+    content.image_prompt = prompt
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not update image-generation status.",
+        ) from exc
+
+    try:
+        storage = ImageStorageService()
+        generator = ImageGenerationService()
+        relative_path, result = storage.store_generated_image(
+            user_id=current_user.id,
+            content_id=content.id,
+            generator=generator,
+            prompt=prompt,
+            size="1024x1024",
+        )
+        content.image_path = relative_path
+        content.image_model = result["model"]
+        content.image_status = "ready"
+        db.commit()
+        db.refresh(content)
+    except Exception as exc:
+        db.rollback()
+        # Persist the failure state without exposing provider details to clients.
+        failed_content = db.scalar(
+            select(GeneratedContent).where(
+                GeneratedContent.id == content_id,
+                GeneratedContent.user_id == current_user.id,
+            )
+        )
+        if failed_content is not None:
+            failed_content.image_status = "failed"
+            db.commit()
+        raise HTTPException(
+            status_code=502,
+            detail="Image generation failed. Please try again.",
+        ) from exc
+
+    return {
+        "content_id": str(content.id),
+        "image_status": content.image_status,
+        "image_url": f"/api/content/{content.id}/image",
+        "image_model": content.image_model,
+        "image_prompt": content.image_prompt,
+        "message": "Image generated and saved successfully.",
+    }
+
+
+@app.get("/api/content/{content_id}/image")
+def get_content_image(
+    content_id: uuid.UUID,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    """Serve an image only to the authenticated owner of its post."""
+    content = db.scalar(
+        select(GeneratedContent).where(
+            GeneratedContent.id == content_id,
+            GeneratedContent.user_id == current_user.id,
+        )
+    )
+
+    if content is None:
+        raise HTTPException(status_code=404, detail="Content not found")
+    if content.image_status != "ready" or not content.image_path:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    storage = ImageStorageService()
+    image_file = storage.resolve_path(content.image_path)
+    if not image_file.is_file():
+        raise HTTPException(status_code=404, detail="Image file not found")
+
+    return FileResponse(
+        path=image_file,
+        media_type="image/png",
+        filename=f"{content.id}.png",
+    )
+
+
+@app.post("/api/content/{content_id}/approve")
+def approve_generated_content(
+    content_id: uuid.UUID,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    """Manually approve an owned generated post so it can be scheduled."""
+    content = db.scalar(
+        select(GeneratedContent).where(
+            GeneratedContent.id == content_id,
+            GeneratedContent.user_id == current_user.id,
+        )
+    )
+
+    if content is None:
+        raise HTTPException(status_code=404, detail="Content not found.")
+
+    if content.approved:
+        return {
+            "id": str(content.id),
+            "approved": True,
+            "message": "Post is already approved.",
+        }
+
+    content.approved = True
+    try:
+        db.commit()
+        db.refresh(content)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not approve the post.",
+        ) from exc
+
+    return {
+        "id": str(content.id),
+        "approved": content.approved,
+        "message": "Post approved. It is now available to schedule.",
+    }
+
+
+@app.post("/api/content/{content_id}/schedule")
+def schedule_content(
+    content_id: uuid.UUID,
+    payload: SchedulePostRequest,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    """Schedule an approved post for an in-app due notification (no publishing)."""
+    scheduled_at = payload.scheduled_at
+    if scheduled_at.tzinfo is None or scheduled_at.utcoffset() is None:
+        raise HTTPException(
+            status_code=422,
+            detail="scheduled_at must include a timezone offset.",
+        )
+    scheduled_at = scheduled_at.astimezone(timezone.utc)
+    now = datetime.now(timezone.utc)
+    if scheduled_at <= now:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose a date and time in the future.",
+        )
+
+    content = db.scalar(
+        select(GeneratedContent).where(
+            GeneratedContent.id == content_id,
+            GeneratedContent.user_id == current_user.id,
+        )
+    )
+    if content is None:
+        raise HTTPException(status_code=404, detail="Content not found.")
+    if not content.approved:
+        raise HTTPException(
+            status_code=409,
+            detail="Only approved posts can be scheduled.",
+        )
+
+    existing = db.scalar(
+        select(ScheduledPost).where(
+            ScheduledPost.content_id == content_id,
+            ScheduledPost.user_id == current_user.id,
+            ScheduledPost.status.in_(["scheduled", "due"]),
+        )
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="This post already has an active schedule.",
+        )
+
+    scheduled_post = ScheduledPost(
+        user_id=current_user.id,
+        content_id=content.id,
+        scheduled_at=scheduled_at,
+        status="scheduled",
+    )
+    try:
+        db.add(scheduled_post)
+        db.commit()
+        db.refresh(scheduled_post)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not save the scheduled post.",
+        ) from exc
+
+    return {
+        "id": str(scheduled_post.id),
+        "content_id": str(content.id),
+        "topic": content.topic,
+        "draft": content.draft,
+        "scheduled_at": scheduled_post.scheduled_at,
+        "status": scheduled_post.status,
+        "notified_at": scheduled_post.notified_at,
+        "created_at": scheduled_post.created_at,
+    }
+
+
+@app.get("/api/scheduled-posts")
+def get_scheduled_posts(
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = db.execute(
+        select(ScheduledPost, GeneratedContent)
+        .join(GeneratedContent, GeneratedContent.id == ScheduledPost.content_id)
+        .where(ScheduledPost.user_id == current_user.id)
+        .order_by(ScheduledPost.scheduled_at.asc())
+    ).all()
+
+    return [
+        {
+            "id": str(schedule.id),
+            "content_id": str(content.id),
+            "topic": content.topic,
+            "draft": content.draft,
+            "approved": content.approved,
+            "scheduled_at": schedule.scheduled_at,
+            "status": schedule.status,
+            "notified_at": schedule.notified_at,
+            "created_at": schedule.created_at,
+        }
+        for schedule, content in rows
+    ]
+
+
+@app.post("/api/scheduled-posts/{schedule_id}/mark-published")
+def mark_scheduled_post_published(
+    schedule_id: uuid.UUID,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    schedule = db.scalar(
+        select(ScheduledPost).where(
+            ScheduledPost.id == schedule_id,
+            ScheduledPost.user_id == current_user.id,
+        )
+    )
+    if schedule is None:
+        raise HTTPException(status_code=404, detail="Scheduled post not found.")
+    if schedule.status != "due":
+        raise HTTPException(
+            status_code=409,
+            detail="Only due posts can be marked as published.",
+        )
+
+    schedule.status = "published"
+    db.commit()
+    db.refresh(schedule)
+    return {
+        "id": str(schedule.id),
+        "status": schedule.status,
+        "message": "Post marked as published. Its due notification has been cleared.",
+    }
+
+
+@app.delete("/api/scheduled-posts/{schedule_id}")
+def cancel_scheduled_post(
+    schedule_id: uuid.UUID,
+    current_user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    schedule = db.scalar(
+        select(ScheduledPost).where(
+            ScheduledPost.id == schedule_id,
+            ScheduledPost.user_id == current_user.id,
+        )
+    )
+    if schedule is None:
+        raise HTTPException(status_code=404, detail="Scheduled post not found.")
+    if schedule.status != "scheduled":
+        raise HTTPException(
+            status_code=409,
+            detail="Only upcoming scheduled posts can be cancelled.",
+        )
+
+    schedule.status = "cancelled"
+    db.commit()
+    db.refresh(schedule)
+    return {
+        "id": str(schedule.id),
+        "status": schedule.status,
+        "message": "Schedule cancelled.",
     }
 
 
@@ -462,6 +859,11 @@ def get_content_history(
             "initial_evaluation": getattr(item, "initial_evaluation", None),
             "final_evaluation": getattr(item, "final_evaluation", None),
             "evaluation_score_delta": getattr(item, "evaluation_score_delta", None),
+            "image_status": getattr(item, "image_status", "not_generated"),
+            "image_url": (
+                f"/api/content/{item.id}/image"
+                if getattr(item, "image_status", None) == "ready" else None
+            ),
             "created_at": item.created_at,
         }
         for item in contents

@@ -75,6 +75,22 @@ class GeneratedContent(Base):
         Integer, nullable=True, default=None
     )
 
+    image_path: Mapped[str | None] = mapped_column(
+        String(500), nullable=True, default=None
+    )
+
+    image_prompt: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None
+    )
+
+    image_model: Mapped[str | None] = mapped_column(
+        String(150), nullable=True, default=None
+    )
+
+    image_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="not_generated"
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
