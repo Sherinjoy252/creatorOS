@@ -1,5 +1,4 @@
-
-from typing import TypedDict
+from typing import TypedDict, NotRequired, Any
 
 
 class CreatorState(TypedDict):
@@ -15,3 +14,6 @@ class CreatorState(TypedDict):
     max_revisions: int
     approved: bool
     audit_trail: list[str]
+    initial_evaluation: NotRequired[dict[str, Any]]
+    final_evaluation: NotRequired[dict[str, Any]]
+    evaluation_score_delta: NotRequired[int]

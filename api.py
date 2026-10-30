@@ -374,6 +374,9 @@ def generate_content(
         "max_revisions": 2,
         "approved": False,
         "audit_trail": [],
+        "initial_evaluation": None,
+        "final_evaluation": None,
+        "evaluation_score_delta": None,
     }
 
     try:
@@ -400,6 +403,9 @@ def generate_content(
         strategy_reason=result["strategy_reason"],
         revision_count=result["revision_count"],
         audit_trail=result["audit_trail"],
+        initial_evaluation=result.get("initial_evaluation"),
+        final_evaluation=result.get("final_evaluation"),
+        evaluation_score_delta=result.get("evaluation_score_delta"),
     )
 
     try:
@@ -422,6 +428,9 @@ def generate_content(
         "strategy_reason": content.strategy_reason,
         "revision_count": content.revision_count,
         "audit_trail": content.audit_trail,
+        "initial_evaluation": content.initial_evaluation,
+        "final_evaluation": content.final_evaluation,
+        "evaluation_score_delta": content.evaluation_score_delta,
         "created_at": content.created_at,
     }
 
@@ -450,6 +459,9 @@ def get_content_history(
             "strategy_reason": item.strategy_reason,
             "revision_count": item.revision_count,
             "audit_trail": item.audit_trail,
+            "initial_evaluation": getattr(item, "initial_evaluation", None),
+            "final_evaluation": getattr(item, "final_evaluation", None),
+            "evaluation_score_delta": getattr(item, "evaluation_score_delta", None),
             "created_at": item.created_at,
         }
         for item in contents

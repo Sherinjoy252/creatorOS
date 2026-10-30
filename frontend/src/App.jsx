@@ -4,6 +4,90 @@ import "./App.css";
 
 const emptyPosts = ["", "", ""];
 
+const evaluationCriteria = [
+  ["technical_accuracy", "Technical accuracy"],
+  ["practical_value", "Practical value"],
+  ["brand_voice_alignment", "Brand voice alignment"],
+  ["readability", "Readability"],
+  ["conciseness", "Conciseness"],
+  ["topic_relevance", "Topic relevance"],
+  ["engagement_potential", "Engagement potential"],
+];
+
+function EvaluationPanel({ initialEvaluation, finalEvaluation, scoreDelta }) {
+  if (!initialEvaluation && !finalEvaluation) {
+    return (
+      <section className="evaluation-panel" style={{ marginTop: "1.5rem" }}>
+        <h3>Self-evaluation</h3>
+        <p className="profile-description">Evaluation details are not available for this post.</p>
+      </section>
+    );
+  }
+
+  const delta = scoreDelta ?? (
+    typeof initialEvaluation?.score === "number" && typeof finalEvaluation?.score === "number"
+      ? finalEvaluation.score - initialEvaluation.score
+      : null
+  );
+
+  const renderEvaluation = (evaluation, title) => {
+    if (!evaluation) {
+      return <p>{title} is not available.</p>;
+    }
+
+    return (
+      <div className="evaluation-stage" style={{ marginTop: "1rem" }}>
+        <h4>{title}: {evaluation.score ?? "—"}/100</h4>
+        <div style={{ display: "grid", gap: "0.85rem" }}>
+          {evaluationCriteria.map(([key, label]) => {
+            const criterion = evaluation.criteria?.[key];
+            if (!criterion) return null;
+            const maxScore = criterion.max_score ?? 0;
+            const score = criterion.score ?? 0;
+            const percentage = maxScore > 0 ? Math.max(0, Math.min(100, (score / maxScore) * 100)) : 0;
+
+            return (
+              <div key={`${title}-${key}`} className="evaluation-criterion">
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "baseline" }}>
+                  <strong>{label}</strong>
+                  <span>{score}/{maxScore}</span>
+                </div>
+                <div style={{ height: "7px", background: "#e8ebf0", borderRadius: "999px", overflow: "hidden", margin: "0.35rem 0" }}>
+                  <div style={{ width: `${percentage}%`, height: "100%", background: "#4263a5", borderRadius: "999px" }} />
+                </div>
+                {criterion.feedback && <p className="profile-description" style={{ margin: 0 }}>{criterion.feedback}</p>}
+              </div>
+            );
+          })}
+        </div>
+        {evaluation.summary && <p style={{ marginTop: "1rem" }}><strong>Summary:</strong> {evaluation.summary}</p>}
+        {evaluation.strengths?.length > 0 && (
+          <div><strong>Strengths</strong><ul>{evaluation.strengths.map((item, index) => <li key={index}>{item}</li>)}</ul></div>
+        )}
+        {evaluation.improvements?.length > 0 && (
+          <div><strong>Areas to improve</strong><ul>{evaluation.improvements.map((item, index) => <li key={index}>{item}</li>)}</ul></div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <section className="evaluation-panel" style={{ marginTop: "1.5rem", padding: "1.25rem", border: "1px solid #d7dce5", borderRadius: "12px" }}>
+      <h3>Self-evaluation</h3>
+      <p className="profile-description">An independent assessment of the first draft and the final edited version.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "0.75rem" }}>
+        <div className="history-item"><span>Initial score</span><h3>{initialEvaluation?.score ?? "—"}/100</h3></div>
+        <div className="history-item"><span>Final score</span><h3>{finalEvaluation?.score ?? "—"}/100</h3></div>
+        <div className="history-item"><span>Score change</span><h3>{delta === null ? "—" : `${delta > 0 ? "+" : ""}${delta} points`}</h3></div>
+      </div>
+      {renderEvaluation(initialEvaluation, "Initial evaluation")}
+      <div style={{ borderTop: "1px solid #d7dce5", marginTop: "1.25rem", paddingTop: "0.25rem" }}>
+        {renderEvaluation(finalEvaluation, "Final evaluation")}
+      </div>
+    </section>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -676,6 +760,12 @@ function App() {
                       <li key={index}>{entry}</li>
                     ))}
                   </ol>
+
+                  <EvaluationPanel
+                    initialEvaluation={generatedContent.initial_evaluation}
+                    finalEvaluation={generatedContent.final_evaluation}
+                    scoreDelta={generatedContent.evaluation_score_delta}
+                  />
                 </div>
               )}
             </section>
@@ -741,6 +831,12 @@ function App() {
                             <li key={index}>{entry}</li>
                           ))}
                         </ol>
+
+                        <EvaluationPanel
+                          initialEvaluation={selectedHistoryItem.initial_evaluation}
+                          finalEvaluation={selectedHistoryItem.final_evaluation}
+                          scoreDelta={selectedHistoryItem.evaluation_score_delta}
+                        />
 
                         <section
                           className="performance-panel"
@@ -926,6 +1022,8 @@ function App() {
             </div>
           </section>
         </section>
+
+
         <footer>CreatorOS · Built for creators who want to grow</footer>
       </main>
     );

@@ -97,6 +97,9 @@ def test_content_history_returns_only_current_users_posts(content_client):
         strategy_reason="Useful for learners.",
         revision_count=1,
         audit_trail=["Strategist planned", "Editor approved"],
+        initial_evaluation=None,
+        final_evaluation=None,
+        evaluation_score_delta=None,
         created_at=None,
     )
 

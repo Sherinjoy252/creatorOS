@@ -1,4 +1,3 @@
-
 import uuid
 from datetime import datetime
 
@@ -62,6 +61,18 @@ class GeneratedContent(Base):
         JSONB,
         nullable=False,
         default=list,
+    )
+
+    initial_evaluation: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, default=None
+    )
+
+    final_evaluation: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, default=None
+    )
+
+    evaluation_score_delta: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=None
     )
 
     created_at: Mapped[datetime] = mapped_column(
